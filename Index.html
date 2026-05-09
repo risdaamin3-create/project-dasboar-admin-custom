@@ -835,7 +835,10 @@
                       <div class="form-group" style="margin-bottom:0;"><label>Harga Normal (Rp) <span style="color:var(--danger)">*</span></label><input type="number" id="pPrice" placeholder="50000"></div>
                       <div class="form-group" style="margin-bottom:0;"><label>Harga Diskon (Rp)</label><input type="number" id="pDiscount" placeholder="Opsional"></div>
                     </div>
-                    <input type="hidden" id="pPromoTimer">
+                    <div class="form-group">
+                      <label>Batas Waktu Promo (Flash Sale)</label>
+                      <input type="datetime-local" id="pPromoTimer" style="color-scheme: light dark;">
+                    </div>
                     
                     <div class="form-group">
                       <label style="margin-bottom: 8px;">Spesifikasi Produk Modern</label>
@@ -1102,19 +1105,15 @@
 
                   <div class="form-group" style="margin-bottom:16px;">
                     <label>Daftar Produk Dipesan</label>
-                    <div style="display: flex; gap: 8px; margin-bottom: 4px; flex-wrap: wrap; align-items: flex-end;">
+                    <div style="display: flex; gap: 8px; margin-bottom: 4px; flex-wrap: wrap;">
                       <div style="flex:2; min-width:140px; position:relative;">
-                        <div style="font-size:10px; color:var(--text-light); margin-bottom:2px;">Pencarian Produk</div>
                         <input type="text" id="tempItemName" placeholder="Cari nama produk/SKU..." autocomplete="off" onkeyup="searchGlobalProduct(this.value, 'tempItemName', 'tempItemPrice', 'orderProdDropdown', 'price')">
                         <div id="orderProdDropdown" style="display:none; position:absolute; background:var(--card-bg); border:1px solid var(--border-color); width:100%; max-height:180px; overflow-y:auto; z-index:1000; border-radius:6px; box-shadow:0 4px 12px rgba(0,0,0,0.1);"></div>
                       </div>
-                      <div style="flex:1; min-width:80px;">
-                        <div style="font-size:10px; color:var(--text-light); margin-bottom:2px;">Varian</div>
-                        <input type="text" id="tempItemVariant" placeholder="Varian" style="width:100%;">
-                      </div>
+                      <input type="text" id="tempItemVariant" placeholder="Varian" style="flex:1; min-width:80px;">
                       <div style="width:70px;"><div style="font-size:10px; color:var(--text-light); margin-bottom:2px;">Jumlah</div><input type="number" id="tempItemQty" placeholder="Qty" value="1" style="width:100%;"></div>
                       <div style="flex:1; min-width:100px;"><div style="font-size:10px; color:var(--text-light); margin-bottom:2px;">Harga (bisa diedit)</div><input type="number" id="tempItemPrice" placeholder="Harga Satuan" style="width:100%;"></div>
-                      <button type="button" class="btn-primary" onclick="addOrderItem()" style="padding: 10px 16px; white-space:nowrap;">Tambahkan Produk</button>
+                      <button type="button" class="btn-primary" onclick="addOrderItem()" style="padding: 10px 16px; align-self:flex-end; white-space:nowrap;">Tambahkan Produk</button>
                     </div>
                     <div id="orderItemsContainer" style="background: #f8fafc; border: 1px dashed var(--border-color); border-radius: 8px; padding: 10px; min-height: 50px;">
                         <div style="color:var(--text-light); font-size:13px; text-align:center;">Belum ada produk ditambahkan</div>
@@ -2466,9 +2465,6 @@ function logoutDashboard() {
       function handleTagKey(e) { if(e.key === 'Enter') { e.preventDefault(); var v = e.target.value.trim(); if(v && !blogLabels.includes(v)) { blogLabels.push(v); e.target.value = ''; renderBlogTags(); } } }
       function renderBlogTags() { var c = document.getElementById('tagCont'); var i = document.getElementById('tagInput'); var oldPills = c.querySelectorAll('.tag-pill'); for (var k = 0; k < oldPills.length; k++) { oldPills[k].remove(); } i.placeholder = blogLabels.length === 0 ? "Ketik lalu tekan Enter..." : ""; blogLabels.forEach(function(t, idx) { var p = document.createElement('div'); p.className = 'tag-pill'; p.innerHTML = t + ' <span onclick="blogLabels.splice(' + idx + ',1);renderBlogTags()">×</span>'; c.insertBefore(p, i); }); }
       
-      let cachedBlogPosts = [];
-      let currentEditPostId = null;
-
       function publishPost(isDraft) { 
           var title = document.getElementById('postTitle').value; 
           var text = quill.getText().trim(); 
@@ -2476,39 +2472,11 @@ function logoutDashboard() {
           showMessage('blogMsg', isDraft ? 'Menyimpan sebagai draf cadangan...' : 'Memublikasikan artikel ke server...', false); 
           google.script.run.withSuccessHandler(function(res) { 
               showMessage('blogMsg', res, res.includes('Error')); 
-              if (!res.includes('Error')) { 
-                  document.getElementById('postTitle').value = ''; 
-                  document.getElementById('postLocation').value = ''; 
-                  document.getElementById('postPermalink').value = ''; 
-                  document.getElementById('postMeta').value = ''; 
-                  document.getElementById('postCanonical').value = ''; 
-                  quill.setContents([]); 
-                  currentEditPostId = null;
-                  setTimeout(showBlogList, 2000); 
-              } 
-          }).publishBlogPost(title, quill.root.innerHTML, blogLabels.join(','), document.getElementById('postMeta').value, document.getElementById('postDate').value, document.getElementById('postLocation').value, document.getElementById('postPermalink').value, isDraft, document.getElementById('postCanonical').value, currentEditPostId); 
-      }
-
-      function editPost(id) {
-          let p = cachedBlogPosts.find(function(x) { return x.id === id; });
-          if(!p) return;
-          currentEditPostId = p.id;
-          document.getElementById('postTitle').value = p.title || '';
-          let rawContent = p.content || '';
-          let cleanContent = rawContent.replace(/<script type="application\/ld\+json">[\s\S]*?<\/script>/gi, '').replace(/<link rel="canonical"[^>]*>/gi, '').trim();
-          quill.clipboard.dangerouslyPasteHTML(cleanContent);
-          blogLabels = p.labels || [];
-          renderBlogTags();
-          document.getElementById('postMeta').value = p.customMetaData || '';
-          if(p.published) document.getElementById('postDate').value = p.published.substring(0, 16);
-          document.getElementById('postLocation').value = (p.location && p.location.name) ? p.location.name : '';
-          document.getElementById('blogListCont').style.display = 'none';
-          document.getElementById('blogFormCont').style.display = 'block';
-          setupTopbarActions('view-tambah-artikel');
-          window.scrollTo({top: 0, behavior: 'smooth'});
+              if (!res.includes('Error')) { document.getElementById('postTitle').value = ''; document.getElementById('postLocation').value = ''; document.getElementById('postPermalink').value = ''; document.getElementById('postMeta').value = ''; document.getElementById('postCanonical').value = ''; quill.setContents([]); setTimeout(showBlogList, 2000); } 
+          }).publishBlogPost(title, quill.root.innerHTML, blogLabels.join(','), document.getElementById('postMeta').value, document.getElementById('postDate').value, document.getElementById('postLocation').value, document.getElementById('postPermalink').value, isDraft, document.getElementById('postCanonical').value); 
       }
       
-      function loadBlogPosts() { var tb = document.getElementById('blogTbody'); tb.innerHTML = '<tr><td colspan="4" style="text-align:center; padding: 40px; color:var(--text-light);">Menyinkronkan CMS...</td></tr>'; google.script.run.withSuccessHandler(function(res) { if (!res.success) { tb.innerHTML = '<tr><td colspan="4" style="text-align:center; color:var(--danger); padding:20px;">Gagal: ' + res.message + '</td></tr>'; return; } cachedBlogPosts = res.data || []; tb.innerHTML = ''; if (res.data.length === 0) { tb.innerHTML = '<tr><td colspan="4" style="text-align:center; padding: 40px; color:var(--text-light);">Blogger Anda kosong.</td></tr>'; return; } res.data.forEach(function(p) { var isDraft = !p.url; var statusBadge = isDraft ? '<span class="badge badge-danger">DRAF</span>' : '<span class="badge badge-success">LIVE KONTEN</span>'; var date = new Date(p.published).toLocaleDateString('id-ID', {day: 'numeric', month: 'short', year: 'numeric'}); var labelsHtml = ''; if (p.labels) { labelsHtml = p.labels.map(function(l) { return '<span style="background:rgba(79,70,229,0.1); color:var(--primary); padding:4px 8px; border-radius:4px; font-size:11px; font-weight:600; margin-right:6px;">' + l + '</span>'; }).join(''); } var btnView = isDraft ? '' : '<a href="' + p.url + '" target="_blank" class="action-btn" title="Kunjungi Artikel" style="color:var(--primary); margin-right:6px;"><span class="material-icons-round" style="font-size:18px;">open_in_new</span></a>'; var btnEdit = '<button class="action-btn" title="Edit Artikel" onclick="editPost(\'' + p.id + '\')" style="margin-right:6px; color:var(--primary);"><span class="material-icons-round" style="font-size:18px;">edit</span></button>'; let row = '<tr><td><b style="color:var(--text-dark); font-size:15px;">' + p.title + '</b><br><small style="color:var(--text-light);">' + date + '</small></td><td>' + labelsHtml + '</td><td>' + statusBadge + '</td><td style="text-align:center;">' + btnView + btnEdit + '<button class="action-btn btn-delete" onclick="delPost(\'' + p.id + '\')"><span class="material-icons-round" style="font-size:18px;">delete</span></button></td></tr>'; tb.innerHTML += row; }); }).getBlogPosts(); }
+      function loadBlogPosts() { var tb = document.getElementById('blogTbody'); tb.innerHTML = '<tr><td colspan="4" style="text-align:center; padding: 40px; color:var(--text-light);">Menyinkronkan CMS...</td></tr>'; google.script.run.withSuccessHandler(function(res) { if (!res.success) { tb.innerHTML = '<tr><td colspan="4" style="text-align:center; color:var(--danger); padding:20px;">Gagal: ' + res.message + '</td></tr>'; return; } tb.innerHTML = ''; if (res.data.length === 0) { tb.innerHTML = '<tr><td colspan="4" style="text-align:center; padding: 40px; color:var(--text-light);">Blogger Anda kosong.</td></tr>'; return; } res.data.forEach(function(p) { var isDraft = !p.url; var statusBadge = isDraft ? '<span class="badge badge-danger">DRAF</span>' : '<span class="badge badge-success">LIVE KONTEN</span>'; var date = new Date(p.published).toLocaleDateString('id-ID', {day: 'numeric', month: 'short', year: 'numeric'}); var labelsHtml = ''; if (p.labels) { labelsHtml = p.labels.map(function(l) { return '<span style="background:rgba(79,70,229,0.1); color:var(--primary); padding:4px 8px; border-radius:4px; font-size:11px; font-weight:600; margin-right:6px;">' + l + '</span>'; }).join(''); } var btnView = isDraft ? '' : '<a href="' + p.url + '" target="_blank" class="action-btn" title="Kunjungi Artikel" style="color:var(--primary); margin-right:6px;"><span class="material-icons-round" style="font-size:18px;">open_in_new</span></a>'; var btnEdit = '<button class="action-btn" title="Edit" onclick="customAlert(\\\'Fitur edit artikel segera hadir.\\\')" style="margin-right:6px; color:var(--primary);"><span class="material-icons-round" style="font-size:18px;">edit</span></button>'; let row = '<tr><td><b style="color:var(--text-dark); font-size:15px;">' + p.title + '</b><br><small style="color:var(--text-light);">' + date + '</small></td><td>' + labelsHtml + '</td><td>' + statusBadge + '</td><td style="text-align:center;">' + btnView + btnEdit + '<button class="action-btn btn-delete" onclick="delPost(\'' + p.id + '\')"><span class="material-icons-round" style="font-size:18px;">delete</span></button></td></tr>'; tb.innerHTML += row; }); }).getBlogPosts(); }
       
       function delPost(id) { customConfirm("Yakin menghapus konten ini permanen dari Blogger? Semua foto di dalamnya juga akan terhapus dari Drive.", function() { google.script.run.withSuccessHandler(function(res) { closeCustomModal(); customAlert(res); loadBlogPosts(); }).deleteBlogPostAPI(id); }); }
 
@@ -2872,14 +2840,14 @@ function searchGlobalProduct(keyword, displayInputId, valueInputId, dropdownId, 
     
     let processSearch = function(data) {
         let kw = keyword.toLowerCase();
-        let res = data.filter(function(r) { return (r[9]&&r[9].toString().toLowerCase().includes(kw)) || (r[1]&&r[1].toString().toLowerCase().includes(kw)); }).slice(0, 10);
+        let res = data.filter(function(r) { return (r[0]&&r[0].toString().toLowerCase().includes(kw)) || (r[1]&&r[1].toString().toLowerCase().includes(kw)); }).slice(0, 10);
         if(res.length === 0) {
             dropdown.innerHTML = '<div style="padding:10px; font-size:12px; color:var(--text-light);">Tidak ditemukan</div>';
             dropdown.style.display = 'block'; return;
         }
         dropdown.innerHTML = '';
         res.forEach(function(r) {
-            let name = r[1], sku = r[9]||'-', price = parseInt(r[2])||0;
+            let name = r[1], sku = r[0]||'-', price = parseInt(r[4])||parseInt(r[3])||0;
             let div = document.createElement('div');
             div.style.cssText = 'padding:8px 10px; border-bottom:1px solid var(--border-color); cursor:pointer; font-size:12px;';
             div.innerHTML = '<b>' + name + '</b><br><span style="color:var(--text-light); font-size:11px;">SKU: ' + sku + ' | Rp ' + price.toLocaleString('id-ID') + '</span>';
@@ -2900,7 +2868,7 @@ function searchGlobalProduct(keyword, displayInputId, valueInputId, dropdownId, 
     if(productsDataCache) { processSearch(productsDataCache); } 
     else { 
         dropdown.innerHTML = '<div style="padding:10px; font-size:12px;">Memuat data...</div>'; dropdown.style.display = 'block';
-        google.script.run.withSuccessHandler(function(d){ productsDataCache = (d||[]); processSearch(productsDataCache); }).getProducts(); 
+        google.script.run.withSuccessHandler(function(d){ productsDataCache = (d||[]).slice(1); processSearch(productsDataCache); }).getProducts(); 
     }
 }
 
