@@ -1,0 +1,2060 @@
+/**
+ * Dashboard Admin Custom Backend Logic
+ * Terintegrasi dengan Google Drive Advanced Service v3 (Jalur VIP) & Gemini AI API
+ */
+
+const SPREADSHEET_ID = '1HVvbXbOQaB__s4f18VUPNH5OlSjbURmp_CbNalvxWy8';
+
+function doGet(e) {
+  let html = HtmlService.createTemplateFromFile('Index');
+  return html.evaluate().setTitle('Dashboard Admin Custom').addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+function getSystemConfig() {
+  const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Settings');
+  // Jika nama tab salah atau tidak ada, sistem akan memberikan peringatan
+  if(!sheet) {
+    console.error("Tab 'Settings' tidak ditemukan!");
+    return { blogId: '', driveId: '', waTemplate: '', geminiApi: '' };
+  }
+  
+  const lastCol = sheet.getLastColumn();
+  if (lastCol === 0) return { blogId: '', driveId: '', waTemplate: '', geminiApi: '' };
+
+  const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  const values = sheet.getRange(2, 1, 1, lastCol).getValues()[0] || [];
+  
+  const configMap = {};
+  // Menambahkan .trim() untuk membersihkan spasi tak terlihat di nama kolom maupun isinya
+  headers.forEach((header, index) => { 
+    if (header) {
+      let key = header.toString().trim();
+      configMap[key] = values[index] !== undefined ? values[index].toString().trim() : ''; 
+    }
+  });
+  
+  return { 
+      wa: configMap['WhatsApp'] || '', 
+      blogId: configMap['Blogger ID'] || '', 
+      driveId: configMap['Drive Folder ID'] || '', 
+      waTemplate: configMap['Template WA'] || '', 
+      geminiApi: configMap['Gemini API Key'] || '',
+      merchantId: configMap['Merchant ID'] || '',
+      storeLogo: configMap['Logo Toko'] || '',
+      storeUrl: configMap['URL Website'] || '',
+      rajaOngkirApi: configMap['API RajaOngkir'] || ''
+  };
+}
+
+function berikanIzinDrive() {
+  Drive.Files.list({pageSize: 1}); 
+  return "Izin akses Google Drive Advanced Service BERHASIL!";
+}
+
+// --- SISTEM KEAMANAN & LOGIN BARU ---
+function hashPassword(password) {
+  if(!password) return "";
+  var rawHash = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, password.toString());
+  var txtHash = '';
+  for (var j = 0; j < rawHash.length; j++) {
+    var hashVal = rawHash[j];
+    if (hashVal < 0) hashVal += 256;
+    if (hashVal.toString(16).length == 1) txtHash += "0";
+    txtHash += hashVal.toString(16);
+  }
+  return txtHash;
+}
+
+function verifyLogin(username, password) {
+  try {
+    const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Users');
+    if(!sheet || sheet.getLastRow() < 2) return { success: false, message: 'Database User tidak ditemukan!' };
+    
+    // Sesuaikan pembacaan kolom agar dinamis dengan struktur database baru Anda
+    const headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 5)).getValues()[0];
+    const userIdx = headers.indexOf('Username');
+    const passIdx = headers.indexOf('Password');
+    const nameIdx = headers.indexOf('Nama');
+    const roleIdx = headers.indexOf('Role');
+    const photoIdx = headers.indexOf('Foto Profil');
+    
+    if(userIdx === -1 || passIdx === -1) {
+      return { success: false, message: 'Format tabel Users salah (Kolom Username/Password hilang)!' };
+    }
+    
+    const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, Math.max(sheet.getLastColumn(), 5)).getValues();
+    const inputHash = hashPassword(password);
+    
+    for (let i = 0; i < data.length; i++) {
+      let dbUser = data[i][userIdx] ? data[i][userIdx].toString().trim() : '';
+      let dbPass = data[i][passIdx] ? data[i][passIdx].toString().trim() : '';
+      
+      // Verifikasi menggunakan Hash atau Teks Biasa
+      if (username === dbUser && (inputHash === dbPass || password === dbPass)) {
+        
+        // Auto-upgrade: Ubah password biasa menjadi hash di Spreadsheet saat login
+        if (password === dbPass && password !== "") {
+          sheet.getRange(i + 2, passIdx + 1).setValue(inputHash);
+        }
+        
+        let dbName = (nameIdx !== -1 && data[i][nameIdx]) ? data[i][nameIdx].toString().trim() : dbUser;
+        let dbRole = (roleIdx !== -1 && data[i][roleIdx]) ? data[i][roleIdx].toString().trim() : 'Staff';
+        let dbFoto = (photoIdx !== -1 && data[i][photoIdx]) ? data[i][photoIdx].toString().trim() : '';
+        
+        logActivity('Sistem Keamanan', 'Login berhasil', dbName);
+        return { 
+          success: true, 
+          nama: dbName, 
+          username: dbUser, 
+          role: dbRole, 
+          foto: dbFoto 
+        };
+      }
+    }
+    
+    logActivity('Sistem Keamanan', 'Gagal login (Username/Password salah)', username);
+    return { success: false, message: 'Username atau Password salah!' };
+  } catch (e) {
+    return { success: false, message: 'Error Server: ' + e.toString() };
+  }
+}
+
+function getDashboardStats() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const productsSheet = ss.getSheetByName('Products');
+  let prodCount = productsSheet ? Math.max(0, productsSheet.getLastRow() - 1) : 0;
+  
+  // Mapping HPP
+  let hppMap = {};
+  if (prodCount > 0) {
+      let pData = productsSheet.getDataRange().getValues();
+      for(let i=1; i<pData.length; i++) {
+          let pName = pData[i][1];
+          let pHPP = parseFloat(pData[i][24]) || 0; // HPP ada di index 24
+          if(pName && pHPP) { hppMap[pName.toString().toLowerCase().trim()] = pHPP; }
+      }
+  }
+
+  let postCount = 0;
+  const config = getSystemConfig();
+  if (config.blogId) {
+    try {
+      const options = { "method": "get", "headers": { "Authorization": "Bearer " + ScriptApp.getOAuthToken() }, "muteHttpExceptions": true };
+      const response = UrlFetchApp.fetch("https://www.googleapis.com/blogger/v3/blogs/" + config.blogId + "/posts?maxResults=500&fetchBodies=false&view=ADMIN", options);
+      const json = JSON.parse(response.getContentText());
+      if (json.items) { postCount = json.items.length; }
+    } catch(e) {}
+  }
+  
+  let gross = 0; let net = 0;
+  const ordersSheet = ss.getSheetByName('Orders');
+  if (ordersSheet && ordersSheet.getLastRow() > 1) {
+     const orderData = ordersSheet.getDataRange().getValues();
+     for (let i = 1; i < orderData.length; i++) {
+        if (orderData[i][8] === 'Selesai') {
+           let amount = parseFloat(orderData[i][6]) || 0;
+           gross += amount;
+           let itemsJson = orderData[i][5];
+           let orderHppTotal = 0;
+           try {
+               let items = JSON.parse(itemsJson);
+               if(Array.isArray(items)) {
+                   items.forEach(it => {
+                       let itName = it.name ? it.name.toString().toLowerCase().trim() : '';
+                       let hpp = hppMap[itName] || 0;
+                       orderHppTotal += hpp * (parseFloat(it.qty) || 1);
+                   });
+               }
+           } catch(e) {}
+           net += (amount - orderHppTotal);
+        }
+     }
+  }
+  
+  return { products: prodCount, posts: postCount, gross: gross, net: net };
+}
+
+function getSettingsData() {
+  let sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Settings');
+  let defaultSettings = { storeName: '', storeUrl: '', wa: '', theme: 'light', address: '', maps: '', ga: '', pixel: '', tiktok: '', blogId: '', driveId: '', gtmId: '', waTemplate: '', socIg: '', socFb: '', geminiApi: '', socTikTok: '', storeLogo: '', merchantId: '', rajaOngkirApi: '' };
+  if(!sheet) return defaultSettings;
+  
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const values = sheet.getRange(2, 1, 1, sheet.getLastColumn()).getValues()[0] || [];
+  
+  const map = {};
+  headers.forEach((header, index) => { map[header] = values[index] !== undefined ? values[index] : ''; });
+  
+  return { 
+    storeName: map['Nama Toko'] || '', storeUrl: map['URL Website'] || '', wa: map['WhatsApp'] || '', 
+    theme: map['Tema'] || 'light', address: map['Alamat Lengkap'] || '', maps: map['Link Maps'] || '', 
+    ga: map['Google Analytics ID'] || '', pixel: map['Meta Pixel ID'] || '', tiktok: map['TikTok Pixel ID'] || '', 
+    blogId: map['Blogger ID'] || '', driveId: map['Drive Folder ID'] || '', gtmId: map['GTM ID'] || '', 
+    waTemplate: map['Template WA'] || '', socIg: map['Instagram'] || '', socFb: map['Facebook'] || '',
+    geminiApi: map['Gemini API Key'] || '', socTikTok: map['Link TikTok'] || '', storeLogo: map['Logo Toko'] || '', merchantId: map['Merchant ID'] || '',
+    rajaOngkirApi: map['API RajaOngkir'] || ''
+  };
+}
+
+function saveSettingsData(storeName, storeUrl, wa, theme, address, maps, ga, pixel, tiktok, blogId, driveId, gtmId, waTemplate, socIg, socFb, geminiApi, socTikTok, storeLogo, merchantId, rajaOngkirApi) {
+  let ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  let sheet = ss.getSheetByName('Settings');
+  
+  // Susunan ideal yang paling rapi
+  const idealHeaders = [
+    'Nama Toko', 'URL Website', 'WhatsApp', 'Alamat Lengkap', 'Link Maps', 'Logo Toko', 
+    'Tema', 'Template WA', 
+    'Blogger ID', 'Drive Folder ID', 'Gemini API Key', 'Merchant ID', 'API RajaOngkir',
+    'Google Analytics ID', 'Meta Pixel ID', 'TikTok Pixel ID', 'GTM ID', 
+    'Instagram', 'Facebook', 'Link TikTok'
+  ];
+  
+  if(!sheet) { 
+    sheet = ss.insertSheet('Settings');
+    sheet.appendRow(idealHeaders);
+  }
+  
+  let currentHeaders = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 1)).getValues()[0];
+  
+  // Memastikan baris header selalu utuh dan update jika ada kolom baru
+  if (!currentHeaders || currentHeaders.length === 0 || currentHeaders[0] === "") {
+    sheet.getRange(1, 1, 1, idealHeaders.length).setValues([idealHeaders]);
+    currentHeaders = idealHeaders;
+  } else {
+    let changed = false;
+    idealHeaders.forEach(ih => {
+       if(!currentHeaders.includes(ih)) {
+          currentHeaders.push(ih);
+          changed = true;
+       }
+    });
+    if(changed) {
+       sheet.getRange(1, 1, 1, currentHeaders.length).setValues([currentHeaders]);
+    }
+  }
+  
+  // Hubungkan data dari Dasbor ke Label Judul Kolom
+  const dataMap = {
+    'Nama Toko': storeName, 'URL Website': storeUrl, 'WhatsApp': wa, 'Alamat Lengkap': address, 'Link Maps': maps, 'Logo Toko': storeLogo,
+    'Tema': theme, 'Template WA': waTemplate, 
+    'Blogger ID': blogId, 'Drive Folder ID': driveId, 'Gemini API Key': geminiApi, 'Merchant ID': merchantId, 'API RajaOngkir': rajaOngkirApi,
+    'Google Analytics ID': ga, 'Meta Pixel ID': pixel, 'TikTok Pixel ID': tiktok, 'GTM ID': gtmId, 
+    'Instagram': socIg, 'Facebook': socFb, 'Link TikTok': socTikTok
+  };
+  
+  // Susun data untuk disimpan sesuai dengan urutan kolom yang ada di Spreadsheet SAAT INI
+  let rowData = currentHeaders.map(header => dataMap[header] !== undefined ? dataMap[header] : "");
+  
+  if (sheet.getLastRow() > 1) { sheet.getRange(2, 1, Math.max(sheet.getLastRow(), 2), sheet.getLastColumn()).clearContent(); }
+  sheet.getRange(2, 1, 1, rowData.length).setValues([rowData]);
+  
+  logActivity('Ubah Pengaturan', 'Pengaturan dasbor diperbarui (Dynamic Sync)', 'Admin');
+  return "Pengaturan berhasil disimpan. Database telah sinkron!";
+}
+
+// ==========================================
+// KECERDASAN BUATAN (GEMINI AI API INTEGRATION)
+// ==========================================
+function callGeminiAI(prompt, isHtmlMode) {
+  const config = getSystemConfig();
+  if (!config.geminiApi) throw new Error("API Key Gemini belum diatur di menu Pengaturan!");
+
+  const cleanApiKey = String(config.geminiApi).trim();
+  
+  // PERUBAHAN DI SINI: Menyesuaikan persis dengan cURL Google AI Studio Anda
+  const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=" + cleanApiKey;
+  
+  let finalPrompt = prompt;
+  if (isHtmlMode) {
+    // Menerapkan aturan output teks biasa tanpa HTML untuk aksesibilitas
+    finalPrompt += "\n\nPENTING: Tuliskan respons dalam format teks biasa (plaintext) murni tanpa menggunakan tag HTML.";
+  }
+
+  const payload = { "contents": [{ "parts": [{"text": finalPrompt}] }] };
+  const options = { 
+    "method": "post", 
+    "contentType": "application/json", 
+    "payload": JSON.stringify(payload), 
+    "muteHttpExceptions": true 
+  };
+
+  try {
+    const response = UrlFetchApp.fetch(url, options);
+    const json = JSON.parse(response.getContentText());
+    
+    if (json.error) throw new Error("Server AI: " + json.error.message);
+
+    if (!json.candidates || json.candidates.length === 0) {
+      throw new Error("Respons kosong atau diblokir oleh sistem keamanan Google.");
+    }
+    if (!json.candidates[0].content || !json.candidates[0].content.parts) {
+      throw new Error("Format respons ditolak. Status: " + json.candidates[0].finishReason);
+    }
+
+    let text = json.candidates[0].content.parts[0].text;
+    if (isHtmlMode) {
+      // Menggunakan hex codes menghindari error backtick saat copy-paste
+      text = text.replace(/\x60\x60\x60html/gi, "").replace(/\x60\x60\x60/gi, "").trim();
+    }
+    return text;
+  } catch (e) {
+    throw new Error(e.message);
+  }
+}
+
+// ==========================================
+// UPLOAD GAMBAR DARI EDITOR ARTIKEL/HALAMAN
+// ==========================================
+function uploadSingleImageToDrive(base64Str) {
+  const config = getSystemConfig();
+  if(!config.driveId) throw new Error("ID Folder Drive belum diisi di menu Pengaturan!");
+  try {
+    const parts = base64Str.split(','); const mimeType = parts[0].split(':')[1].split(';')[0];
+    const cleanData = parts[1].replace(/[^A-Za-z0-9+/=]/g, '');
+    const blob = Utilities.newBlob(Utilities.base64Decode(cleanData), mimeType, 'IMG_BLOG_' + Date.now() + '_' + Math.floor(Math.random()*1000) + '.jpg');
+    const fileMetadata = { name: blob.getName(), parents: [config.driveId] };
+    const file = Drive.Files.create(fileMetadata, blob);
+    Drive.Permissions.create({ role: 'reader', type: 'anyone' }, file.id);
+    return "https://drive.google.com/uc?id=" + file.id;
+  } catch(e) { throw new Error(e.message); }
+}
+
+function processHtmlImages(htmlContent) {
+  if (!htmlContent) return '';
+  let updated = htmlContent.replace(/https:\/\/drive\.google\.com\/uc\?id=([a-zA-Z0-9_-]+)/g, 'https://drive.google.com/thumbnail?id=$1&sz=w1000');
+  updated = updated.replace(/https:\/\/lh3\.googleusercontent\.com\/d\/([a-zA-Z0-9_-]+)/g, 'https://drive.google.com/thumbnail?id=$1&sz=w1000');
+  return updated;
+}
+
+function deleteDriveImagesFromHtml(htmlContent) {
+  if (!htmlContent) return;
+  const regex = /(?:thumbnail\?id=|uc\?id=|d\/)([a-zA-Z0-9_-]{25,})/g;
+  let match; let idsToDelete = [];
+  while ((match = regex.exec(htmlContent)) !== null) { idsToDelete.push(match[1]); }
+  idsToDelete = [...new Set(idsToDelete)];
+  idsToDelete.forEach(id => { try { Drive.Files.remove(id); } catch(e) {} });
+}
+
+function processImagesToDrive(params) {
+  const config = getSystemConfig();
+  if(!config.driveId) throw new Error("ID Folder Drive belum diisi di Pengaturan!");
+
+  function convertBase64ToDriveUrl(base64Str) {
+    if (!base64Str || typeof base64Str !== 'string') return base64Str;
+    if (base64Str.startsWith('http')) return base64Str; 
+    if (!base64Str.startsWith('data:image')) return base64Str; 
+    try {
+      const parts = base64Str.split(','); const mimeType = parts[0].split(':')[1].split(';')[0];
+      const cleanData = parts[1].replace(/[^A-Za-z0-9+/=]/g, '');
+      const blob = Utilities.newBlob(Utilities.base64Decode(cleanData), mimeType, 'IMG_' + Date.now() + '_' + Math.floor(Math.random()*1000) + '.jpg');
+      const fileMetadata = { name: blob.getName(), parents: [config.driveId] };
+      const file = Drive.Files.create(fileMetadata, blob);
+      Drive.Permissions.create({ role: 'reader', type: 'anyone' }, file.id);
+      return "https://drive.google.com/uc?id=" + file.id;
+    } catch(e) { throw new Error("ADVANCED DRIVE ERROR: " + e.message); }
+  }
+
+  if (params.img) {
+    try {
+      let parsed = JSON.parse(params.img);
+      if (Array.isArray(parsed)) { for (let i = 0; i < parsed.length; i++) { parsed[i] = convertBase64ToDriveUrl(parsed[i]); } params.img = JSON.stringify(parsed); } 
+      else { params.img = JSON.stringify([convertBase64ToDriveUrl(parsed)]); }
+    } catch(e) { if (params.img.startsWith('data:image')) { params.img = JSON.stringify([convertBase64ToDriveUrl(params.img)]); } }
+  }
+  if (params.variant) {
+    try {
+      let varsArray = JSON.parse(params.variant);
+      if (Array.isArray(varsArray)) { for (let i = 0; i < varsArray.length; i++) { if (varsArray[i].image) { varsArray[i].image = convertBase64ToDriveUrl(varsArray[i].image); } } params.variant = JSON.stringify(varsArray); }
+    } catch(e) {}
+  }
+  return params;
+}
+
+function buildProductJSONLD(p) {
+  let images = [];
+  try { let parsedImg = JSON.parse(p.img); if (Array.isArray(parsedImg)) { images = parsedImg; } else { images.push(parsedImg); } } 
+  catch(e) { if(p.img) images.push(p.img); }
+
+  let availabilitySchema = "https://schema.org/InStock";
+  if (p.availability && p.availability.includes("OutOfStock")) availabilitySchema = "https://schema.org/OutOfStock";
+  if (p.availability && p.availability.includes("PreOrder")) availabilitySchema = "https://schema.org/PreOrder";
+
+  let baseUrl = "https://example.com";
+  try { 
+      let settings = getSettingsData(); 
+      if (settings.storeUrl) baseUrl = settings.storeUrl.replace(/\/$/, ""); 
+  } catch(e) {}
+  
+  let productUrl = p.canonical ? p.canonical : baseUrl + "/p/" + p.slug + ".html";
+
+  let schema = {
+    "@context": "https://schema.org/", "@type": "Product", "name": p.name, "image": images, "description": p.desc ? p.desc.substring(0, 200) : "", "sku": p.sku || "",
+    "offers": { "@type": "Offer", "url": productUrl, "priceCurrency": "IDR", "price": p.price, "availability": availabilitySchema, "itemCondition": "https://schema.org/NewCondition" }
+  };
+
+  // Tambahkan aggregateRating dari Testimonials jika ada
+  if (p.sku) {
+     try {
+         var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+         var testSheet = ss.getSheetByName('Testimonials');
+         if (testSheet) {
+             var tData = testSheet.getDataRange().getValues();
+             var ratingSum = 0; var ratingCount = 0;
+             for (var i = 1; i < tData.length; i++) {
+                 if (tData[i][3] == p.sku) {
+                     ratingSum += parseInt(tData[i][4]);
+                     ratingCount++;
+                 }
+             }
+             if (ratingCount > 0) {
+                 schema.aggregateRating = {
+                     "@type": "AggregateRating",
+                     "ratingValue": (ratingSum / ratingCount).toFixed(1),
+                     "reviewCount": ratingCount
+                 };
+             }
+         }
+     } catch(e) {}
+  }
+
+  if (p.youtube) {
+    let ytMatch = p.youtube.match(/(?:v=|\/)([a-zA-Z0-9_-]{11})/);
+    if(ytMatch) {
+       schema.video = {
+          "@type": "VideoObject",
+          "name": "Video: " + p.name,
+          "description": p.desc ? p.desc.substring(0, 200) : "",
+          "thumbnailUrl": "https://img.youtube.com/vi/" + ytMatch[1] + "/maxresdefault.jpg",
+          "uploadDate": new Date().toISOString(),
+          "embedUrl": "https://www.youtube.com/embed/" + ytMatch[1]
+       };
+    }
+  }
+
+  if (p.faq) {
+    try {
+      let faqData = JSON.parse(p.faq);
+      if (faqData.length > 0) { schema.mainEntity = faqData.map(f => ({ "@type": "Question", "name": f.q, "acceptedAnswer": { "@type": "Answer", "text": f.a } })); }
+    } catch(e) {}
+  }
+  return '<script type="application/ld+json">\n' + JSON.stringify(schema) + '\n</script>';
+}
+
+function getSafeImgUrl(url) {
+  if(!url) return '';
+  let match = url.match(/id=([a-zA-Z0-9_-]+)/); if (!match) match = url.match(/d\/([a-zA-Z0-9_-]+)/);
+  if(match) { return 'https://drive.google.com/thumbnail?id=' + match[1] + '&sz=w1000'; }
+  return url;
+}
+
+// ==========================================
+// SINKRONISASI PRODUK (DATA LAYER, OG META, WA TEMPLATE, ALT TEXT OTOMATIS)
+// ==========================================
+function syncProductToBlogger(p, existingPageId) {
+  const config = getSystemConfig();
+  if(!config.blogId) throw new Error("Blog ID belum diatur di Pengaturan!");
+
+  let imgHtml = "";
+  let safeMainImgUrl = "";
+  try {
+    let imgs = JSON.parse(p.img);
+    if(imgs.length > 0) {
+        safeMainImgUrl = getSafeImgUrl(imgs[0]);
+        imgHtml = '<img src="' + safeMainImgUrl + '" alt="' + p.name + ' - Harga dan Spesifikasi" title="Jual ' + p.name + '" class="katalog-img-utama" style="max-width:100%; border-radius:8px;"/>';
+    }
+  } catch(e) { 
+      if(p.img) {
+          safeMainImgUrl = getSafeImgUrl(p.img);
+          imgHtml = '<img src="' + safeMainImgUrl + '" alt="' + p.name + ' - Harga dan Spesifikasi" title="Jual ' + p.name + '" class="katalog-img-utama"/>';
+      } 
+  }
+
+  let badgeHtml = "";
+  let finalPrice = p.price;
+  let priceHtml = '<div class="katalog-harga">Rp ' + p.price + '</div>';
+
+  if (p.discount && parseFloat(p.discount) > 0 && parseFloat(p.discount) < parseFloat(p.price)) {
+      let discPercent = Math.round(((p.price - p.discount) / p.price) * 100);
+      badgeHtml = '<div class="badge-diskon" style="position:absolute; top:10px; right:10px; background:#ef4444; color:white; padding:4px 8px; border-radius:6px; font-weight:bold; font-size:12px;">Hemat ' + discPercent + '%</div>';
+      priceHtml = '<div class="katalog-harga"><span style="text-decoration:line-through; color:#94a3b8; font-size:14px; margin-right:8px;">Rp ' + p.price + '</span> Rp ' + p.discount + '</div>';
+      finalPrice = p.discount; 
+  }
+
+  let waMsg = config.waTemplate || "Halo admin, saya ingin order [NAMA_PRODUK] dengan SKU [SKU_PRODUK]. Harga: Rp [HARGA]. Apakah tersedia?";
+  waMsg = waMsg.replace(/\[NAMA_PRODUK\]/g, p.name).replace(/\[SKU_PRODUK\]/g, (p.sku||"-")).replace(/\[HARGA\]/g, finalPrice);
+  let waLink = 'https://wa.me/' + config.wa + '?text=' + encodeURIComponent(waMsg);
+
+  let eventId = 'vi_' + Date.now() + Math.floor(Math.random() * 1000); 
+  
+  let dataLayerScript = '<script>\n' +
+  '  window.dataLayer = window.dataLayer || [];\n' +
+  '  window.dataLayer.push({\n' +
+  '    event: "view_item",\n' +
+  '    event_id: "' + eventId + '",\n' +
+  '    ecommerce: {\n' +
+  '      currency: "IDR",\n' +
+  '      value: ' + finalPrice + ',\n' +
+  '      items: [{\n' +
+  '          item_id: "' + (p.sku || p.slug) + '",\n' +
+  '          item_name: "' + p.name + '",\n' +
+  '          price: ' + finalPrice + ',\n' +
+  '          item_category: "' + (p.category || 'Uncategorized') + '"\n' +
+  '      }]\n' +
+  '    }\n' +
+  '  });\n' +
+  '</script>';
+
+  let ogMeta = '<!-- Open Graph Meta Tags -->\n' +
+  '<meta property="og:title" content="' + p.name + '">\n' +
+  '<meta property="og:description" content="' + p.desc.substring(0, 150) + '...">\n' +
+  '<meta property="og:image" content="' + safeMainImgUrl + '">\n' +
+  '<meta property="og:type" content="product">\n' +
+  '<meta name="twitter:card" content="summary_large_image">';
+
+  let youtubeHtml = "";
+  if (p.youtube) {
+      let ytMatch = p.youtube.match(/(?:v=|\/)([a-zA-Z0-9_-]{11})/);
+      if(ytMatch) {
+          youtubeHtml = '<div class="katalog-video" style="margin-top:20px; border-radius:8px; overflow:hidden;"><iframe width="100%" height="315" src="https://www.youtube.com/embed/' + ytMatch[1] + '" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe></div>';
+      }
+  }
+
+  let timerHtml = "";
+  if (p.promoTimer) {
+      timerHtml = '<div class="promo-countdown" data-endtime="' + p.promoTimer + '" style="margin-top:10px; background:#fef08a; padding:10px; border-radius:6px; font-weight:bold; color:#854d0e; text-align:center;">⏳ Promo berakhir pada: ' + p.promoTimer.replace('T', ' ') + '</div>';
+  }
+
+  let volumeHtml = "";
+  if (p.volume) {
+      volumeHtml = '<div class="volume-info" data-volume="' + p.volume + '" style="margin-top:10px; font-size:13px; color:var(--text-light);"><span style="vertical-align:middle;">📦</span> Isi per Satuan/Area: <b>' + p.volume + '</b></div>';
+  }
+
+  let content = ogMeta + '\n' +
+  '<div class="katalog-produk-container" data-sku="' + (p.sku||'') + '" style="position:relative;">\n' +
+  '  ' + badgeHtml + '\n' +
+  '  ' + imgHtml + '\n' +
+  '  <h1 class="katalog-nama">' + p.name + '</h1>\n' +
+  '  ' + priceHtml + '\n' +
+  '  ' + timerHtml + '\n' +
+  '  ' + volumeHtml + '\n' +
+  '  <div class="katalog-deskripsi">' + p.desc + '</div>\n' +
+  '  ' + youtubeHtml + '\n' +
+  '  <a href="' + waLink + '" class="btn-beli-wa" target="_blank" rel="noopener noreferrer">Beli via WhatsApp</a>\n' +
+  '</div>\n' +
+  p.jsonLd + '\n' +
+  dataLayerScript;
+
+  let payload = { "kind": "blogger#page", "title": p.name, "content": content };
+  const options = { "method": existingPageId ? "put" : "post", "headers": { "Authorization": "Bearer " + ScriptApp.getOAuthToken() }, "contentType": "application/json", "payload": JSON.stringify(payload), "muteHttpExceptions": true };
+  let url = existingPageId ? "https://www.googleapis.com/blogger/v3/blogs/" + config.blogId + "/pages/" + existingPageId : "https://www.googleapis.com/blogger/v3/blogs/" + config.blogId + "/pages/";
+  let response = UrlFetchApp.fetch(url, options);
+  let json = JSON.parse(response.getContentText());
+  
+  if (json.error) throw new Error(json.error.message);
+  return { id: json.id, url: json.url };
+}
+
+function getProducts() {
+  try {
+    const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Products');
+    const data = sheet.getDataRange().getValues();
+    const result = [];
+    for (let i = 1; i < data.length; i++) { let rowData = data[i]; rowData.push(i + 1); result.push(rowData); }
+    return result; 
+  } catch (e) { return []; }
+}
+
+function addProduct(p) {
+  p = processImagesToDrive(p); p.jsonLd = buildProductJSONLD(p);
+  let bloggerData = { id: "", url: "" }; try { bloggerData = syncProductToBlogger(p, null); } catch(e) {}
+  const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Products');
+  sheet.appendRow([ new Date().toLocaleString('id-ID'), p.name, p.price, p.category, p.desc, p.img, p.slug, p.metaTitle, p.metaDesc, p.sku, p.stock, p.variant, p.spec, p.tags, p.discount, p.weight, p.unit, p.moq, p.availability, p.faq, p.canonical, p.jsonLd, bloggerData.id, bloggerData.url, p.hpp, p.promoTimer, p.youtube, p.volume ]);
+  
+  logActivity('Tambah Produk', 'Menambahkan produk baru: ' + p.name, 'Admin'); 
+  try { syncToMerchantCenter(p); } catch(e) {} // <-- Baris tambahan
+  return "Produk berhasil disimpan dan Halaman Statis terbit di Blogspot!";
+}
+
+function updateProduct(row, p) {
+  p = processImagesToDrive(p); p.jsonLd = buildProductJSONLD(p);
+  const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Products');
+  let existingPageId = sheet.getRange(row, 23).getValue(); let bloggerData = { id: existingPageId, url: sheet.getRange(row, 24).getValue() };
+  try { bloggerData = syncProductToBlogger(p, existingPageId || null); } catch(e) {}
+  sheet.getRange(row, 2, 1, 27).setValues([[ p.name, p.price, p.category, p.desc, p.img, p.slug, p.metaTitle, p.metaDesc, p.sku, p.stock, p.variant, p.spec, p.tags, p.discount, p.weight, p.unit, p.moq, p.availability, p.faq, p.canonical, p.jsonLd, bloggerData.id, bloggerData.url, p.hpp, p.promoTimer, p.youtube, p.volume ]]);
+  
+  logActivity('Edit Produk', 'Memperbarui data produk: ' + p.name, 'Admin'); 
+  try { syncToMerchantCenter(p); } catch(e) {} // <-- Baris tambahan
+  return "Data produk dan Halaman Statis Blogspot berhasil diperbarui!";
+}
+
+function deleteProduct(rowNumber) {
+  const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Products');
+  const config = getSystemConfig();
+  
+  const rowData = sheet.getRange(rowNumber, 1, 1, 24).getValues()[0];
+  const prodName = rowData[1]; // Mengambil nama produk untuk dimasukkan ke Log
+  const mainImagesRaw = rowData[5]; const variantsRaw = rowData[11]; const pageId = rowData[22];
+
+  if (pageId && config.blogId) {
+    try { 
+      const options = { "method": "delete", "headers": { "Authorization": "Bearer " + ScriptApp.getOAuthToken() }, "muteHttpExceptions": true };
+      UrlFetchApp.fetch("https://www.googleapis.com/blogger/v3/blogs/" + config.blogId + "/pages/" + pageId, options);
+    } catch(e) {} 
+  }
+  
+  function extractFileId(url) {
+    if(!url) return null;
+    let match = url.match(/id=([a-zA-Z0-9_-]+)/); if (!match) match = url.match(/d\/([a-zA-Z0-9_-]+)/);
+    return match ? match[1] : null;
+  }
+
+  try {
+    let imgs = JSON.parse(mainImagesRaw);
+    if(Array.isArray(imgs)) { imgs.forEach(img => { let fId = extractFileId(img); if(fId) try { Drive.Files.remove(fId); } catch(e){} }); }
+  } catch(e) { let fId = extractFileId(mainImagesRaw); if(fId) try { Drive.Files.remove(fId); } catch(e){} }
+
+  try {
+    let vars = JSON.parse(variantsRaw);
+    if(Array.isArray(vars)) { vars.forEach(v => { let fId = extractFileId(v.image); if(fId) try { Drive.Files.remove(fId); } catch(e){} }); }
+  } catch(e){}
+
+  sheet.deleteRow(rowNumber);
+  logActivity('Hapus Produk', 'Menghapus permanen produk: ' + prodName, 'Admin'); // <-- Pemicu Log
+  return "Produk dan foto di Drive berhasil dihapus secara permanen.";
+}
+
+function updateInlineData(row, mainPrice, mainDisc, mainStock, variantStr) {
+  const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Products');
+  sheet.getRange(row, 3).setValue(mainPrice); sheet.getRange(row, 15).setValue(mainDisc); sheet.getRange(row, 11).setValue(mainStock);  
+  if(variantStr) { sheet.getRange(row, 12).setValue(variantStr); } 
+  return "Data harga & stok berhasil disimpan!";
+}
+
+// ==========================================
+// FITUR BLOGGER API (ARTIKEL)
+// ==========================================
+function publishBlogPost(title, content, labels, meta, postDate, location, permalink, isDraft, canonical) {
+  const config = getSystemConfig();
+  if(!config.blogId) return "Error: Blog ID belum diatur di Pengaturan!";
+
+  let schemaArticle = { "@context": "https://schema.org", "@type": "Article", "headline": title, "description": meta, "datePublished": postDate || new Date().toISOString() };
+  let schemaBreadcrumb = { "@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [ { "@type": "ListItem", "position": 1, "name": "Artikel" }, { "@type": "ListItem", "position": 2, "name": title } ] };
+  
+  let safeContent = processHtmlImages(content);
+  let finalContent = safeContent + '\n<script type="application/ld+json">\n' + JSON.stringify(schemaArticle) + '\n</script>\n<script type="application/ld+json">\n' + JSON.stringify(schemaBreadcrumb) + '\n</script>';
+  if (canonical) { finalContent += '\n<link rel="canonical" href="' + canonical + '">'; }
+
+  const payload = { "kind": "blogger#post", "title": title, "content": finalContent };
+  if(labels) payload.labels = labels.split(',').map(l => l.trim());
+  if(meta) payload.customMetaData = meta; if(location) payload.location = { "name": location };
+  if(postDate) { try { payload.published = new Date(postDate).toISOString(); } catch(e) {} }
+
+  const options = { "method": "post", "headers": { "Authorization": "Bearer " + ScriptApp.getOAuthToken() }, "contentType": "application/json", "payload": JSON.stringify(payload), "muteHttpExceptions": true };
+  try {
+    const draftParam = isDraft ? "?isDraft=true" : "";
+    const response = UrlFetchApp.fetch("https://www.googleapis.com/blogger/v3/blogs/" + config.blogId + "/posts/" + draftParam, options);
+    const json = JSON.parse(response.getContentText());
+    if (json.error) return "Error API: " + json.error.message;
+    return isDraft ? "Artikel disimpan sebagai DRAF." : "Artikel SEO berhasil TERBIT.";
+  } catch(e) { return "Error sistem: " + e.message; }
+}
+
+function getBlogPosts() {
+  const config = getSystemConfig();
+  if(!config.blogId) return { success: false, message: "Blog ID belum diatur di Pengaturan!" };
+
+  const options = { "method": "get", "headers": { "Authorization": "Bearer " + ScriptApp.getOAuthToken() }, "muteHttpExceptions": true };
+  try {
+    const response = UrlFetchApp.fetch("https://www.googleapis.com/blogger/v3/blogs/" + config.blogId + "/posts?maxResults=20&view=ADMIN", options);
+    const json = JSON.parse(response.getContentText());
+    if (json.error) return { success: false, message: json.error.message };
+    return { success: true, data: json.items || [] };
+  } catch(e) { return { success: false, message: e.message }; }
+}
+
+function deleteBlogPostAPI(postId) {
+  const config = getSystemConfig();
+  if(!config.blogId) return "Error: Blog ID belum diatur di Pengaturan!";
+  const authHeader = { "Authorization": "Bearer " + ScriptApp.getOAuthToken() };
+
+  try {
+    const getOptions = { "method": "get", "headers": authHeader, "muteHttpExceptions": true };
+    const getResponse = UrlFetchApp.fetch("https://www.googleapis.com/blogger/v3/blogs/" + config.blogId + "/posts/" + postId, getOptions);
+    const postData = JSON.parse(getResponse.getContentText());
+    if (postData && postData.content) { deleteDriveImagesFromHtml(postData.content); }
+  } catch(e) {}
+
+  const options = { "method": "delete", "headers": authHeader, "muteHttpExceptions": true };
+  try {
+    const response = UrlFetchApp.fetch("https://www.googleapis.com/blogger/v3/blogs/" + config.blogId + "/posts/" + postId, options);
+    if(response.getResponseCode() === 204) return "Artikel dan gambarnya berhasil dihapus permanen.";
+    return "Gagal menghapus artikel.";
+  } catch(e) { return "Error: " + e.message; }
+}
+
+// ==========================================
+// FITUR BLOGGER API (HALAMAN)
+// ==========================================
+function getBlogPages() {
+  const config = getSystemConfig();
+  if(!config.blogId) return { success: false, message: "Blog ID belum diatur di Pengaturan!" };
+
+  const options = { "method": "get", "headers": { "Authorization": "Bearer " + ScriptApp.getOAuthToken() }, "muteHttpExceptions": true };
+  try {
+    const response = UrlFetchApp.fetch("https://www.googleapis.com/blogger/v3/blogs/" + config.blogId + "/pages?view=ADMIN", options);
+    const json = JSON.parse(response.getContentText());
+    if (json.error) return { success: false, message: json.error.message };
+    
+    let items = json.items || [];
+    const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Products');
+    const data = sheet.getDataRange().getValues();
+    const productPageIds = [];
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][22]) productPageIds.push(String(data[i][22])); 
+    }
+    
+    let filteredItems = items.filter(page => !productPageIds.includes(String(page.id)));
+    return { success: true, data: filteredItems };
+  } catch(e) { return { success: false, message: e.message }; }
+}
+
+function publishBlogPage(title, content, meta, date, permalink, canonical) {
+  const config = getSystemConfig();
+  if(!config.blogId) return "Error: Blog ID belum diatur di Pengaturan!";
+
+  let safeContent = processHtmlImages(content);
+  let finalContent = safeContent; 
+  if (canonical) { finalContent += '\n<link rel="canonical" href="' + canonical + '">'; }
+
+  const payload = { "kind": "blogger#page", "title": title, "content": finalContent };
+  if(meta) payload.customMetaData = meta; if(date) { try { payload.published = new Date(date).toISOString(); } catch(e) {} }
+
+  const options = { "method": "post", "headers": { "Authorization": "Bearer " + ScriptApp.getOAuthToken() }, "contentType": "application/json", "payload": JSON.stringify(payload), "muteHttpExceptions": true };
+  try {
+    const response = UrlFetchApp.fetch("https://www.googleapis.com/blogger/v3/blogs/" + config.blogId + "/pages/", options);
+    const json = JSON.parse(response.getContentText());
+    if (json.error) return "Error API: " + json.error.message;
+    return "Halaman berhasil diterbitkan.";
+  } catch(e) { return "Error sistem: " + e.message; }
+}
+
+function deleteBlogPageAPI(pageId) {
+  const config = getSystemConfig();
+  if(!config.blogId) return "Error: Blog ID belum diatur di Pengaturan!";
+  const authHeader = { "Authorization": "Bearer " + ScriptApp.getOAuthToken() };
+
+  try {
+    const getOptions = { "method": "get", "headers": authHeader, "muteHttpExceptions": true };
+    const getResponse = UrlFetchApp.fetch("https://www.googleapis.com/blogger/v3/blogs/" + config.blogId + "/pages/" + pageId, getOptions);
+    const pageData = JSON.parse(getResponse.getContentText());
+    if (pageData && pageData.content) { deleteDriveImagesFromHtml(pageData.content); }
+  } catch(e) {}
+
+  const options = { "method": "delete", "headers": authHeader, "muteHttpExceptions": true };
+  try {
+    const response = UrlFetchApp.fetch("https://www.googleapis.com/blogger/v3/blogs/" + config.blogId + "/pages/" + pageId, options);
+    if(response.getResponseCode() === 204) return "Halaman dan gambarnya berhasil dihapus permanen.";
+    return "Gagal menghapus halaman.";
+  } catch(e) { return "Error: " + e.message; }
+}
+
+// ==========================================
+// FASE 4: KEAMANAN & AUDIT TRAIL (LOG AKTIVITAS)
+// ==========================================
+
+function logActivity(action, details, user) {
+  user = user || 'Admin';
+  try {
+    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sheet = ss.getSheetByName('Audit_Log');
+    
+    // Jika sheet log belum ada, sistem akan membuatnya dan menyembunyikannya
+    if (!sheet) {
+      sheet = ss.insertSheet('Audit_Log');
+      sheet.appendRow(['Timestamp', 'Aksi', 'Detail', 'Pengguna']);
+      sheet.getRange('A1:D1').setFontWeight('bold');
+      sheet.hideSheet(); 
+    }
+    
+    var timestamp = new Date().toLocaleString('id-ID');
+    sheet.appendRow([timestamp, action, details, user]);
+  } catch (e) {
+    // Error diabaikan agar tidak mengganggu proses operasional utama
+  }
+}
+
+function backupDatabase() {
+  const config = getSystemConfig();
+  if(!config.driveId) throw new Error("ID Folder Drive belum diisi di menu Pengaturan!");
+  
+  try {
+    var file = DriveApp.getFileById(SPREADSHEET_ID);
+    var folder = DriveApp.getFolderById(config.driveId);
+    
+    var dateStr = new Date().toLocaleDateString('id-ID').replace(/\//g, '-');
+    var timeStr = new Date().toLocaleTimeString('id-ID').replace(/:/g, '.');
+    var backupName = "Backup_Dasbor_" + dateStr + "_" + timeStr;
+    
+    // Proses menduplikasi file
+    file.makeCopy(backupName, folder);
+    
+    // Catat aktivitas ini ke Log
+    logActivity('Backup Database', 'Berhasil membuat salinan database: ' + backupName, 'Admin');
+    
+    return "✅ Backup berhasil! Database Anda telah aman digandakan ke Google Drive dengan nama: " + backupName;
+  } catch (e) {
+    throw new Error("Gagal melakukan backup. Pastikan Drive ID sudah benar. Detail: " + e.message);
+  }
+}
+
+function getOrders() {
+  try {
+    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sheet = ss.getSheetByName('Orders');
+    if (!sheet) {
+      sheet = ss.insertSheet('Orders');
+      sheet.appendRow(['ID Pesanan', 'Tanggal', 'Nama Pelanggan', 'No WA', 'Alamat Pelanggan', 'Produk', 'Total Harga', 'Ekspedisi', 'Status', 'No Resi']);
+      sheet.getRange('A1:J1').setFontWeight('bold');
+    }
+    // PERBAIKAN: Menggunakan getDisplayValues() agar tanggal & angka terkirim sebagai teks murni yang aman
+    const data = sheet.getDataRange().getDisplayValues();
+    const result = [];
+    for (let i = 1; i < data.length; i++) {
+      let rowData = data[i];
+      rowData.push(i + 1); // Tambahkan nomor baris asli
+      result.push(rowData);
+    }
+    return result;
+  } catch (e) { return []; }
+}
+
+function saveOrderData(row, id, date, name, phone, address, item, amount, status, expedition, receipt, ongkir, payment) {
+  try {
+    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sheet = ss.getSheetByName('Orders');
+    
+    if (!sheet) {
+        sheet = ss.insertSheet('Orders');
+        sheet.appendRow(['ID Pesanan', 'Tanggal', 'Nama Pelanggan', 'No WA', 'Alamat Pelanggan', 'Produk', 'Total Harga', 'Ekspedisi', 'Status', 'No Resi', 'Ongkir', 'Pembayaran']);
+        sheet.getRange('A1:L1').setFontWeight('bold');
+    }
+    
+    if (row === null || row === "") {
+      sheet.appendRow([id, date, name, phone, address, item, amount, expedition, status, receipt, ongkir || '0', payment || 'Transfer']);
+      logActivity('Tambah Pesanan', 'Pesanan baru dicatat: ' + id, 'Admin');
+      // Trigger CRM: Otomatis rekap data pelanggan
+      updateCustomerDB(name, phone, amount); 
+    } else {
+      sheet.getRange(parseInt(row), 1, 1, 12).setValues([[id, date, name, phone, address, item, amount, expedition, status, receipt, ongkir || '0', payment || 'Transfer']]);
+      logActivity('Update Pesanan', 'Status pesanan diperbarui: ' + id, 'Admin');
+    }
+    
+    SpreadsheetApp.flush(); 
+    return "Pesanan berhasil disimpan!";
+  } catch (e) {
+    throw new Error("Sistem Database: " + e.message);
+  }
+}
+
+function deleteOrder(rowNumber) {
+  var sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Orders');
+  sheet.deleteRow(rowNumber);
+  logActivity('Hapus Pesanan', 'Menghapus data pesanan pada baris: ' + rowNumber, 'Admin');
+  
+  // PERBAIKAN: Memaksa server Google sinkronisasi
+  SpreadsheetApp.flush(); 
+  
+  return "Pesanan berhasil dihapus!";
+}
+
+function check404Links() {
+  const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Products');
+  if(!sheet) return "Tidak ada data produk.";
+  const data = sheet.getDataRange().getValues();
+  let broken = [];
+  
+  for(let i = 1; i < data.length; i++) {
+    let url = data[i][23]; // Kolom ke-24 berisi URL halaman produk
+    if(url && url.toString().startsWith('http')) {
+      try {
+        let res = UrlFetchApp.fetch(url, {muteHttpExceptions: true}); 
+        if(res.getResponseCode() !== 200) {
+          broken.push(data[i][1]); // Simpan nama produk yang link-nya mati
+        }
+      } catch(e) {
+        broken.push(data[i][1] + " (Error)");
+      }
+    }
+  }
+  
+  if(broken.length > 0) {
+     logActivity('Pemantauan 404', 'Ditemukan tautan rusak pada: ' + broken.join(', '), 'Sistem');
+     return "⚠️ Ditemukan tautan rusak pada produk berikut:\n\n" + broken.join('\n') + "\n\nCek Log Aktivitas untuk detail.";
+  }
+  return "✅ Luar biasa! Semua tautan produk Anda berstatus 200 (Aman & Aktif).";
+}
+
+function getInternalLinksForAI() {
+  const posts = getBlogPosts();
+  if (!posts.success || !posts.data || posts.data.length === 0) return "";
+  
+  // PERBAIKAN: Menyaring (filter) artikel yang belum punya URL (Draf)
+  let links = posts.data
+      .filter(p => p.url) 
+      .slice(0, 10)
+      .map(p => `- Judul: "${p.title}" (URL: ${p.url})`).join('\n');
+      
+  return "\n\nPENTING: Di bagian paling bawah artikel, buat format 'Baca Juga' dan sertakan 2-3 tautan (hyperlink HTML) dari daftar artikel internal ini jika relevan dengan topik bahasan:\n" + links;
+}
+
+// ==========================================
+// FASE 4: IMPOR & EKSPOR MASSAL CSV (BULK EDIT)
+// ==========================================
+
+function exportProductsCSV() {
+  const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Products');
+  if(!sheet) return "";
+  const data = sheet.getDataRange().getValues();
+  
+  let csvArr = [];
+  // Header CSV
+  csvArr.push(["Row_ID", "Nama_Produk", "SKU", "Harga_Normal", "Harga_Diskon", "Stok_Induk"]);
+  
+  // Kita mulai dari baris ke-2 (index 1) karena baris ke-1 adalah header di Spreadsheet
+  for (let i = 1; i < data.length; i++) {
+    let rowIdx = i + 1; // ID baris yang sesungguhnya di database
+    let name = String(data[i][1]).replace(/"/g, '""'); // Membersihkan tanda kutip agar aman
+    let sku = String(data[i][9]).replace(/"/g, '""');
+    let price = data[i][2];
+    let disc = data[i][14] || "";
+    let stock = data[i][10] || 0;
+    
+    // Gabungkan dengan koma
+    csvArr.push([rowIdx, `"${name}"`, `"${sku}"`, price, disc, stock].join(","));
+  }
+  return csvArr.join("\n");
+}
+
+function importProductsCSV(csvString) {
+  try {
+    const data = Utilities.parseCsv(csvString);
+    const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Products');
+    let count = 0;
+    
+    // Loop dari baris ke-2 CSV (mengabaikan header)
+    for (let i = 1; i < data.length; i++) {
+      let row = data[i];
+      if(row.length < 6) continue;
+      
+      let rowIdx = parseInt(row[0]);
+      let name = row[1];
+      let sku = row[2];
+      let price = row[3];
+      let disc = row[4];
+      let stock = row[5];
+      
+      // Pastikan Row_ID valid untuk menghindari penimpaan data yang salah
+      if(rowIdx > 1 && rowIdx <= sheet.getLastRow()) {
+        sheet.getRange(rowIdx, 2).setValue(name);     // Update Nama
+        sheet.getRange(rowIdx, 3).setValue(price);    // Update Harga
+        sheet.getRange(rowIdx, 10).setValue(sku);     // Update SKU
+        sheet.getRange(rowIdx, 11).setValue(stock);   // Update Stok
+        sheet.getRange(rowIdx, 15).setValue(disc);    // Update Diskon
+        count++;
+      }
+    }
+    
+    logActivity('Bulk Edit CSV', 'Memperbarui massal ' + count + ' produk via CSV', 'Admin');
+    return "✅ Berhasil memperbarui " + count + " produk secara massal!";
+  } catch(e) {
+    throw new Error("Gagal mengimpor CSV. Pastikan Anda tidak menghapus kolom Row_ID. Detail: " + e.message);
+  }
+}
+// ==========================================
+// FASE 1: GENERATOR ARTIKEL PILLAR BATCH (REVISI - KE LAYAR UI)
+// ==========================================
+function processBatchArticles(keywords) {
+  const config = getSystemConfig();
+  if(!config.geminiApi) throw new Error("API Key Gemini belum diatur di menu Pengaturan!");
+  
+  let generatedArticles = [];
+  
+  for(let i = 0; i < keywords.length; i++) {
+    let kw = keywords[i].trim();
+    if(!kw) continue;
+    
+    // Instruksi AI dikunci ketat untuk menjaga kemurnian Plaintext
+    let prompt = `Tulis artikel blog pilar yang lengkap, informatif, dan edukatif untuk topik/kata kunci: "${kw}".
+    INSTRUKSI FORMAT SANGAT KETAT:
+    1. Seluruh artikel WAJIB ditulis murni dalam format Plaintext.
+    2. DILARANG KERAS menyertakan tag pemformatan HTML, XML, atau blok kode apa pun.
+    3. Teks harus siap disalin, copy-friendly, dan sangat kompatibel untuk diekstraksi ke sistem NotebookLM Google.
+    Awali tulisan dengan "JUDUL ARTIKEL: [Judul yang relevan]"`;
+    
+    try {
+      let aiText = callGeminiAI(prompt, true); 
+      // Menyimpan hasil ke dalam array untuk dikirim balik ke layar dashboard
+      generatedArticles.push(`KATA KUNCI: ${kw}\n\n${aiText}`);
+    } catch(e) {
+      generatedArticles.push(`KATA KUNCI: ${kw}\n[GAGAL DIGENERATE: ${e.message}]`);
+    }
+  }
+  
+  logActivity('Batch AI Creator', `Berhasil merakit ${generatedArticles.length} artikel pilar ke layar dasbor`, 'Admin');
+  
+  // Mengembalikan array berisi teks langsung ke frontend HTML
+  return generatedArticles;
+}
+// ==========================================
+// FASE 1: GENERATOR KUITANSI & LABEL THERMAL (UNDUH OTOMATIS)
+// ==========================================
+function generatePdfDocument(type, size, orderId, date, name, phone, address, item, amount, expedition, receipt, introText, ongkir, status, payment) {
+  const config = getSettingsData(); // Dapatkan pengaturan toko, termasuk logo
+  let safeLogoUrl = getSafeImgUrl(config.storeLogo);
+  if (!safeLogoUrl) safeLogoUrl = 'https://via.placeholder.com/150';
+  let invoiceItemsHtml = "";
+  let labelItemsHtml = "";
+  let ongkirNum = parseInt(ongkir) || 0;
+  let amountNum = parseInt(amount) || 0;
+  let subtotalProduk = amountNum - ongkirNum;
+  let isCOD = (payment === 'COD');
+  
+  try {
+      let parsedItems = JSON.parse(item);
+      if(Array.isArray(parsedItems)) {
+          parsedItems.forEach((it, idx) => {
+              let sub = parseInt(it.qty) * parseInt(it.price || 0);
+              // Baris untuk Kuitansi/Invoice
+              invoiceItemsHtml += `
+                <tr>
+                  <td style="padding: 15px 12px; border-bottom: 1px solid #e2e2e2; font-size: 15px;">${it.name}${it.variant ? ' <span style="color:#6366f1;">(' + it.variant + ')</span>' : ''}</td>
+                  <td style="padding: 15px 12px; border-bottom: 1px solid #e2e2e2; text-align: center; font-size: 15px;">${it.qty}</td>
+                  <td style="padding: 15px 12px; border-bottom: 1px solid #e2e2e2; text-align: right; font-size: 15px;">Rp ${sub.toLocaleString('id-ID')}</td>
+                </tr>`;
+              // Baris untuk Label Pengiriman (sekarang dengan Varian dan Qty)
+              labelItemsHtml += `
+                <tr>
+                  <td style="padding: 5px; border: 1px solid #000; vertical-align: top; text-align:center;">${idx + 1}</td>
+                  <td style="padding: 5px; border: 1px solid #000; vertical-align: top;">${it.name}</td>
+                  <td style="padding: 5px; border: 1px solid #000; vertical-align: top; text-align:center;">${it.variant || '-'}</td>
+                  <td style="padding: 5px; border: 1px solid #000; text-align: center; vertical-align: top;">${it.qty}</td>
+                </tr>`;
+          });
+      } else { throw new Error(); }
+  } catch(e) {
+      // Jika pesanan dibuat sebelum update ini (pesanan lama teks biasa)
+      invoiceItemsHtml = `
+                <tr>
+                  <td style="padding: 15px 12px; border-bottom: 1px solid #e2e2e2; font-size: 15px;">${item}</td>
+                  <td style="padding: 15px 12px; border-bottom: 1px solid #e2e2e2; text-align: center; font-size: 15px;">1</td>
+                  <td style="padding: 15px 12px; border-bottom: 1px solid #e2e2e2; text-align: right; font-size: 15px;">Rp ${amount}</td>
+                </tr>`;
+      labelItemsHtml = `
+                <tr>
+                  <td style="padding: 5px; border: 1px solid #000; vertical-align: top; text-align:center;">1</td>
+                  <td style="padding: 5px; border: 1px solid #000; vertical-align: top;">${item}</td>
+                  <td style="padding: 5px; border: 1px solid #000; vertical-align: top; text-align:center;">-</td>
+                  <td style="padding: 5px; border: 1px solid #000; text-align: center; vertical-align: top;">1</td>
+                </tr>`;
+  }
+  let fileName = '';
+  let htmlTemplate = '';
+  if (type === 'invoice') {
+     // Template Kuitansi (Tidak ada perubahan)
+     fileName = 'Invoice_' + orderId + '.pdf';
+     htmlTemplate = `
+        <div style="font-family: 'Helvetica Neue', Helvetica, sans-serif; padding: 40px; max-width: 800px; margin: 0 auto; color: #333;">
+          <div style="text-align: center; margin-bottom: 30px;">
+            <h1 style="color: #4f46e5; margin: 0;">INVOICE / KUITANSI</h1>
+            <p style="font-size: 14px; color: #64748b; margin-top: 5px;">${config.storeName || 'Toko Kami'}</p>
+          </div>
+          <hr style="border: 0; border-top: 2px solid #e2e8f0; margin-bottom: 30px;">
+          
+          <table style="width: 100%; margin-bottom: 30px;">
+            <tr>
+              <td style="width: 50%; vertical-align: top;">
+                <p style="margin: 0 0 5px 0; font-size: 12px; color: #64748b;">Ditagihkan Kepada:</p>
+                <p style="margin: 0 0 5px 0; font-weight: bold; font-size: 16px;">${name}</p>
+                <p style="margin: 0; font-size: 14px;">WA: ${phone}</p>
+              </td>
+              <td style="width: 50%; vertical-align: top; text-align: right;">
+                <p style="margin: 0 0 5px 0; font-size: 12px; color: #64748b;">Detail Pesanan:</p>
+                <p style="margin: 0 0 5px 0; font-weight: bold; font-size: 14px;">ID: ${orderId}</p>
+                <p style="margin: 0; font-size: 14px;">Tanggal: ${date}</p>
+              </td>
+            </tr>
+          </table>
+
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px;">
+            <thead>
+              <tr style="background-color: #f8fafc; text-align: left;">
+                <th style="padding: 12px; border-bottom: 2px solid #cbd5e1;">Deskripsi Produk</th>
+                <th style="padding: 12px; border-bottom: 2px solid #cbd5e1; text-align: center;">Qty</th>
+                <th style="padding: 12px; border-bottom: 2px solid #cbd5e1; text-align: right;">Subtotal</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${invoiceItemsHtml}
+            </tbody>
+          </table>
+
+          <div style="text-align: right; margin-top: 20px;">
+            <table style="margin-left: auto; border-collapse: collapse;">
+              <tr>
+                <td style="padding: 5px 20px; font-size: 14px; color: #64748b; text-align: right;">Subtotal Produk:</td>
+                <td style="padding: 5px 0; font-size: 14px; text-align: right;">Rp ${subtotalProduk.toLocaleString('id-ID')}</td>
+              </tr>
+              <tr>
+                <td style="padding: 5px 20px; font-size: 14px; color: #64748b; text-align: right;">Biaya Ongkir:</td>
+                <td style="padding: 5px 0; font-size: 14px; text-align: right;">Rp ${ongkirNum.toLocaleString('id-ID')}</td>
+              </tr>
+              <tr style="border-top: 2px solid #0f172a;">
+                <td style="padding: 10px 20px; font-size: 18px; font-weight: bold; color: #0f172a; text-align: right;">Total Keseluruhan:</td>
+                <td style="padding: 10px 0; font-size: 22px; font-weight: bold; color: #0f172a; text-align: right;">Rp ${amountNum.toLocaleString('id-ID')}</td>
+              </tr>
+            </table>
+            ${isCOD ? '<div style="margin-top: 10px; padding: 8px 16px; background: #fef2f2; border: 2px solid #ef4444; border-radius: 8px; display: inline-block; color: #ef4444; font-weight: bold; font-size: 16px;">PEMBAYARAN: COD (Bayar di Tempat)</div>' : ''}
+          </div>
+
+          <div style="margin-top: 60px; text-align: center; border-top: 1px dashed #cbd5e1; padding-top: 20px;">
+            <p style="font-size: 12px; color: #64748b; margin: 0;">Terima kasih atas kepercayaan Anda berbelanja di ${config.storeName || 'Toko Kami'}.</p>
+            <p style="font-size: 12px; color: #64748b; margin: 5px 0 0 0;">Dokumen ini dibuat otomatis oleh sistem dan sah tanpa tanda tangan.</p>
+          </div>
+        </div>
+     `;
+  } else if (type === 'quotation') {
+     // Template Surat Penawaran Harga (B2B)
+     fileName = 'Penawaran_' + orderId + '.pdf';
+     htmlTemplate = `
+        <div style="font-family: 'Helvetica Neue', Helvetica, sans-serif; padding: 40px; max-width: 800px; margin: 0 auto; color: #333;">
+          <div style="text-align: center; margin-bottom: 30px;">
+            <h1 style="color: #4f46e5; margin: 0;">SURAT PENAWARAN HARGA (QUOTATION)</h1>
+            <p style="font-size: 14px; color: #64748b; margin-top: 5px;">${config.storeName || 'Toko Kami'}</p>
+          </div>
+          <hr style="border: 0; border-top: 2px solid #e2e8f0; margin-bottom: 30px;">
+          
+          ${introText ? `<div style="margin-bottom: 30px; font-size: 14.5px; line-height: 1.6; color: #333; background: #f8fafc; padding: 20px; border-radius: 8px; border-left: 4px solid #4f46e5;">${introText.replace(/\n/g, '<br>')}</div>` : ''}
+          
+          <table style="width: 100%; margin-bottom: 30px;">
+            <tr>
+              <td style="width: 50%; vertical-align: top;">
+                <p style="margin: 0 0 5px 0; font-size: 12px; color: #64748b;">Ditujukan Kepada:</p>
+                <p style="margin: 0 0 5px 0; font-weight: bold; font-size: 16px;">${name}</p>
+                <p style="margin: 0; font-size: 14px;">WA: ${phone}</p>
+              </td>
+              <td style="width: 50%; vertical-align: top; text-align: right;">
+                <p style="margin: 0 0 5px 0; font-size: 12px; color: #64748b;">Detail Penawaran:</p>
+                <p style="margin: 0 0 5px 0; font-weight: bold; font-size: 14px;">ID Quotation: QUO-${orderId}</p>
+                <p style="margin: 0; font-size: 14px;">Tanggal: ${date}</p>
+              </td>
+            </tr>
+          </table>
+
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px;">
+            <thead>
+              <tr style="background-color: #f8fafc; text-align: left;">
+                <th style="padding: 12px; border-bottom: 2px solid #cbd5e1;">Deskripsi Produk</th>
+                <th style="padding: 12px; border-bottom: 2px solid #cbd5e1; text-align: center;">Qty</th>
+                <th style="padding: 12px; border-bottom: 2px solid #cbd5e1; text-align: right;">Subtotal</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${invoiceItemsHtml}
+            </tbody>
+          </table>
+
+          <div style="text-align: right; margin-top: 20px;">
+            <p style="font-size: 14px; color: #64748b; margin: 0 0 5px 0;">Total Estimasi:</p>
+            <p style="font-size: 24px; font-weight: bold; color: #0f172a; margin: 0;">Rp ${amount}</p>
+          </div>
+
+          <div style="margin-top: 40px;">
+            <p style="font-size: 14px; color: #333; margin: 0 0 5px 0;"><b>Syarat & Ketentuan:</b></p>
+            <ol style="font-size: 12px; color: #64748b; padding-left: 15px; margin-top: 5px;">
+                <li>Harga di atas dapat berubah sewaktu-waktu tanpa pemberitahuan sebelumnya jika belum terjadi kesepakatan.</li>
+                <li>Estimasi harga belum termasuk ongkos kirim kargo/custom freight (jika ada).</li>
+                <li>Surat penawaran ini sah dan berlaku sebagai referensi resmi dari ${config.storeName || 'Toko Kami'}.</li>
+            </ol>
+          </div>
+
+          <div style="margin-top: 60px; text-align: center; border-top: 1px dashed #cbd5e1; padding-top: 20px;">
+            <p style="font-size: 12px; color: #64748b; margin: 0;">Terima kasih atas minat Anda pada produk ${config.storeName || 'Toko Kami'}.</p>
+          </div>
+        </div>
+     `;
+  } else if (type === 'label') {
+     fileName = 'Label_Pengiriman_' + orderId + '.pdf';
+     
+     let barcodeHtml = "";
+     if (receipt && receipt.trim() !== "") {
+         let base64Barcode = getBarcodeBase64(receipt.trim()); 
+         
+         if (base64Barcode) {
+             // PERBAIKAN: Mengatur lebar barcode agar membentang (width: 70%)
+             barcodeHtml = `<div style="text-align:center; margin: 15px 0;"><img src="${base64Barcode}" style="width: 70%; max-height: 60px; height: auto;" /></div>`;
+         } else {
+             let safeReceipt = encodeURIComponent(receipt.trim());
+             barcodeHtml = `<div style="text-align:center; margin: 15px 0;"><img src="https://bwipjs-api.metafloor.com/?bcid=code128&text=${safeReceipt}&scaleX=3&scaleY=1" style="width: 70%; max-height: 60px; height: auto;" /></div>`;
+         }
+     } else {
+         barcodeHtml = `<div style="text-align:center; margin: 15px 0; padding: 10px; border: 1px dashed #ccc;"><b>BELUM ADA RESI</b></div>`;
+     }
+
+     let fontSize = size === '58mm' ? '10px' : (size === '80mm' ? '12px' : '14px');
+
+     // PERBAIKAN: CSS @page untuk mengatur ukuran kertas ke 100x150mm & Tabel Garis Penuh
+     htmlTemplate = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          /* Memaksa PDF memiliki ukuran kertas thermal 100mm x 150mm */
+          @page {
+            size: 100mm 150mm;
+            margin: 2mm;
+          }
+          body {
+            margin: 0;
+            padding: 0;
+            background-color: #fff;
+          }
+        </style>
+      </head>
+      <body>
+        <div style="font-family: 'Helvetica Neue', Helvetica, sans-serif; width: 100%; max-width: 100mm; margin: 0 auto; color: #000; padding: 8px; box-sizing: border-box; font-size: ${fontSize};">
+          
+          <!-- Baris Pertama: Logo Toko & Nama Ekspedisi -->
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 10px;">
+            <tr>
+              <td style="width: 40%; text-align: left; vertical-align: middle;">
+                <img src="${safeLogoUrl}" style="max-height:50px; width:auto;" />
+              </td>
+              <td style="width: 60%; text-align: right; vertical-align: middle;">
+                <div style="font-size: 18px; font-weight: bold; color: #ff0000;">${expedition || 'NAMA EKSPEDISI'}</div>
+                ${ongkirNum > 0 ? '<div style="font-size: 12px; margin-top: 4px;">Ongkir: Rp ' + ongkirNum.toLocaleString('id-ID') + '</div>' : ''}
+              </td>
+            </tr>
+          </table>
+
+          <!-- Baris Kedua: No. Pesanan & No. Resi -->
+          <table style="width: 100%; border-collapse: collapse; border: 1px solid #000; margin-bottom: 5px;">
+            <tr>
+              <td style="width: 45%; border-right: 1px solid #000; padding: 5px; text-align: center;">
+                <div style="font-size: 10px;">No. Pesanan:</div>
+                <div style="font-size: 14px; font-weight: bold;">${orderId}</div>
+              </td>
+              <td style="width: 55%; padding: 5px; text-align: left;">
+                <div style="font-size: 10px;">No. Resi:</div>
+                <div style="font-size: 14px; font-weight: bold;">${receipt}</div>
+              </td>
+            </tr>
+          </table>
+
+          <!-- Baris Ketiga: Barcode (Diperlebar) -->
+          ${barcodeHtml}
+
+          <!-- Garis Pemisah Putus-Putus -->
+          <div style="border-top: 1px dashed #000; margin: 10px 0;"></div>
+
+          ${isCOD ? `
+          <!-- Label COD kecil -->
+          <div style="text-align: center; margin-bottom: 8px;">
+            <span style="font-size: 11px; font-weight: bold; color: #fff; background: #ff0000; padding: 3px 12px; border-radius: 3px; letter-spacing: 1px;">COD</span>
+            <span style="font-size: 11px; font-weight: bold; margin-left: 5px;">Rp ${amountNum.toLocaleString('id-ID')}</span>
+          </div>
+          ` : ''}
+
+          <!-- Baris Keempat: Data Penerima / Pengirim -->
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+              <td style="width: 50%; vertical-align: top; padding-right: 5px;">
+                <p style="margin: 0 0 5px 0; font-size: ${fontSize}; font-weight: bold;">Penerima:</p>
+                <p style="margin: 0 0 5px 0; font-size: ${fontSize};">${name}</p>
+                <p style="margin: 0 0 5px 0; font-size: ${fontSize};">WA: ${phone}</p>
+                <p style="margin: 0; font-size: ${fontSize};">${address || '[ALAMAT LENGKAP PELANGGAN]'}</p>
+              </td>
+              <td style="width: 50%; vertical-align: top; padding-left: 5px; text-align: right;">
+                <p style="margin: 0 0 5px 0; font-size: ${fontSize}; font-weight: bold;">Pengirim:</p>
+                <p style="margin: 0 0 5px 0; font-size: ${fontSize};">${config.storeName || 'Toko Kami'}</p>
+                <p style="margin: 0 0 5px 0; font-size: ${fontSize};">WA: ${config.wa || '-'}</p>
+                <p style="margin: 0; font-size: ${fontSize};">${config.address || '[KOTA ASAL PENGIRIM]'}</p>
+              </td>
+            </tr>
+          </table>
+
+          <!-- Garis Pemisah Putus-Putus -->
+          <div style="border-top: 1px dashed #000; margin: 10px 0;"></div>
+
+          <!-- Baris Kelima: Daftar Produk (PERBAIKAN BORDER TABEL KELILING) -->
+          <p style="margin: 0 0 5px 0; font-size: ${fontSize}; font-weight: bold;">DETAIL PESANAN (${orderId}):</p>
+          <table style="width: 100%; border-collapse: collapse; font-size: ${fontSize}; margin-top: 5px; border: 1px solid #000;">
+            <thead>
+              <tr style="text-align: left;">
+                <th style="padding: 5px; border: 1px solid #000; width: 5%; text-align: center;">#</th>
+                <th style="padding: 5px; border: 1px solid #000; width: 55%;">Nama Produk</th>
+                <th style="padding: 5px; border: 1px solid #000; width: 20%; text-align: center;">Varian</th>
+                <th style="padding: 5px; border: 1px solid #000; width: 10%; text-align: center;">Qty</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${labelItemsHtml}
+            </tbody>
+          </table>
+
+        </div>
+      </body>
+      </html>
+     `;
+  }
+
+  // Mengubah HTML menjadi Dokumen PDF
+  let blob = Utilities.newBlob(htmlTemplate, MimeType.HTML).getAs(MimeType.PDF).setName(fileName);
+  
+  // Mengenkripsi PDF menjadi Base64 agar bisa langsung dikirim dan di-download dari layar browser pengguna
+  let base64 = Utilities.base64Encode(blob.getBytes());
+  
+  // Menyimpan salinan secara senyap ke Google Drive sebagai arsip data (opsional)
+  try {
+     if (config.driveId) {
+        let folder = DriveApp.getFolderById(config.driveId);
+        folder.createFile(blob);
+     }
+  } catch(e) {
+     // Abaikan jika folder Drive penuh atau id salah agar proses download tetap berjalan
+  }
+
+  logActivity('Cetak PDF', 'Unduh ' + type + ' (Ukuran: ' + size + ') untuk pesanan: ' + orderId, 'Admin');
+
+  // Kirim data kembali ke Dasbor
+  return { base64: base64, fileName: fileName };
+}
+
+// Fungsi PDF Khusus Halaman Surat Penawaran B2B (Standalone)
+function generateQuotationPDF(quoId, date, name, phone, address, itemStr, amount, introText, terms) {
+  const config = getSettingsData();
+  let safeLogoUrl = getSafeImgUrl(config.storeLogo);
+  if (!safeLogoUrl) safeLogoUrl = 'https://via.placeholder.com/150';
+  
+  let itemsHtml = "";
+  try {
+    let items = JSON.parse(itemStr);
+    if(Array.isArray(items)) {
+      items.forEach(function(it) {
+        let sub = parseInt(it.qty) * parseInt(it.price || 0);
+        itemsHtml += `
+          <tr>
+            <td style="padding: 15px 12px; border-bottom: 1px solid #e2e2e2; font-size: 15px;">${it.name}${it.variant ? ' <span style="color:#6366f1;">(' + it.variant + ')</span>' : ''}</td>
+            <td style="padding: 15px 12px; border-bottom: 1px solid #e2e2e2; text-align: center; font-size: 15px;">${it.qty}</td>
+            <td style="padding: 15px 12px; border-bottom: 1px solid #e2e2e2; text-align: right; font-size: 15px;">Rp ${sub.toLocaleString('id-ID')}</td>
+          </tr>`;
+      });
+    }
+  } catch(e) {
+    itemsHtml = `<tr><td style="padding:15px 12px; border-bottom:1px solid #e2e2e2;" colspan="3">${itemStr}</td></tr>`;
+  }
+  
+  let termsHtml = "";
+  if(terms) {
+    let lines = terms.split('\n');
+    termsHtml = lines.map(function(l) { return '<li>' + l.replace(/^\d+\.\s*/, '') + '</li>'; }).join('');
+  }
+  
+  let fileName = 'Penawaran_' + quoId + '.pdf';
+  let htmlTemplate = `
+    <div style="font-family: 'Helvetica Neue', Helvetica, sans-serif; padding: 40px; max-width: 800px; margin: 0 auto; color: #333;">
+      <div style="text-align: center; margin-bottom: 30px;">
+        <h1 style="color: #4f46e5; margin: 0;">SURAT PENAWARAN HARGA (QUOTATION)</h1>
+        <p style="font-size: 14px; color: #64748b; margin-top: 5px;">${config.storeName || 'Toko Kami'}</p>
+      </div>
+      <hr style="border: 0; border-top: 2px solid #e2e8f0; margin-bottom: 30px;">
+      
+      ${introText ? '<div style="margin-bottom: 30px; font-size: 14.5px; line-height: 1.6; color: #333; background: #f8fafc; padding: 20px; border-radius: 8px; border-left: 4px solid #4f46e5;">' + introText.replace(/\n/g, '<br>') + '</div>' : ''}
+      
+      <table style="width: 100%; margin-bottom: 30px;">
+        <tr>
+          <td style="width: 50%; vertical-align: top;">
+            <p style="margin: 0 0 5px 0; font-size: 12px; color: #64748b;">Ditujukan Kepada:</p>
+            <p style="margin: 0 0 5px 0; font-weight: bold; font-size: 16px;">${name}</p>
+            <p style="margin: 0 0 5px 0; font-size: 14px;">WA: ${phone || '-'}</p>
+            <p style="margin: 0; font-size: 14px;">${address || ''}</p>
+          </td>
+          <td style="width: 50%; vertical-align: top; text-align: right;">
+            <p style="margin: 0 0 5px 0; font-size: 12px; color: #64748b;">Detail Penawaran:</p>
+            <p style="margin: 0 0 5px 0; font-weight: bold; font-size: 14px;">ID: ${quoId}</p>
+            <p style="margin: 0; font-size: 14px;">Tanggal: ${date}</p>
+          </td>
+        </tr>
+      </table>
+
+      <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px;">
+        <thead>
+          <tr style="background-color: #f8fafc; text-align: left;">
+            <th style="padding: 12px; border-bottom: 2px solid #cbd5e1;">Deskripsi Produk</th>
+            <th style="padding: 12px; border-bottom: 2px solid #cbd5e1; text-align: center;">Qty</th>
+            <th style="padding: 12px; border-bottom: 2px solid #cbd5e1; text-align: right;">Subtotal</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${itemsHtml}
+        </tbody>
+      </table>
+
+      <div style="text-align: right; margin-top: 20px;">
+        <p style="font-size: 14px; color: #64748b; margin: 0 0 5px 0;">Total Estimasi:</p>
+        <p style="font-size: 24px; font-weight: bold; color: #0f172a; margin: 0;">Rp ${parseInt(amount).toLocaleString('id-ID')}</p>
+      </div>
+
+      ${termsHtml ? '<div style="margin-top: 40px;"><p style="font-size: 14px; color: #333; margin: 0 0 5px 0;"><b>Syarat & Ketentuan:</b></p><ol style="font-size: 12px; color: #64748b; padding-left: 15px; margin-top: 5px;">' + termsHtml + '</ol></div>' : ''}
+
+      <div style="margin-top: 60px; text-align: center; border-top: 1px dashed #cbd5e1; padding-top: 20px;">
+        <p style="font-size: 12px; color: #64748b; margin: 0;">Terima kasih atas minat Anda pada produk ${config.storeName || 'Toko Kami'}.</p>
+        <p style="font-size: 12px; color: #64748b; margin: 5px 0 0 0;">Dokumen ini dibuat otomatis dan sah sebagai referensi resmi.</p>
+      </div>
+    </div>
+  `;
+
+  let blob = Utilities.newBlob(htmlTemplate, MimeType.HTML).getAs(MimeType.PDF).setName(fileName);
+  let base64 = Utilities.base64Encode(blob.getBytes());
+  
+  try {
+     if (config.driveId) {
+        let folder = DriveApp.getFolderById(config.driveId);
+        folder.createFile(blob);
+     }
+  } catch(e) {}
+
+  logActivity('Cetak Quotation', 'Surat Penawaran B2B: ' + quoId + ' untuk ' + name, 'Admin');
+  return { base64: base64, fileName: fileName };
+}
+
+function getBarcodeBase64(text) {
+  if (!text) return "";
+  try {
+    // PERBAIKAN: Tambahkan scaleX=3 untuk melebarkan barcode ke samping
+    var url = "https://bwipjs-api.metafloor.com/?bcid=code128&text=" + encodeURIComponent(text) + "&scaleX=3&scaleY=1";
+    var response = UrlFetchApp.fetch(url, {muteHttpExceptions: true});
+    
+    if (response.getResponseCode() === 200) {
+      var blob = response.getBlob();
+      return "data:image/png;base64," + Utilities.base64Encode(blob.getBytes());
+    }
+  } catch(e) {}
+  return "";
+}
+// ==========================================
+// CRM PELANGGAN LOYAL (DATABASE & SINKRONISASI)
+// ==========================================
+
+function updateCustomerDB(name, phone, amount) {
+  if(!phone) return;
+  var cleanPhone = String(phone).replace(/[^0-9]/g, '');
+  if(cleanPhone.startsWith('0')) cleanPhone = '62' + cleanPhone.substring(1);
+  
+  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var sheet = ss.getSheetByName('Customers');
+  if (!sheet) {
+    sheet = ss.insertSheet('Customers');
+    sheet.appendRow(['Nama Pelanggan', 'Nomor WA', 'Total Belanja', 'Jumlah Order', 'Tanggal Terakhir']);
+    sheet.getRange('A1:E1').setFontWeight('bold');
+    sheet.hideSheet(); 
+  }
+  
+  var data = sheet.getDataRange().getValues();
+  var foundRow = -1;
+  var currentTotal = 0;
+  var currentCount = 0;
+  
+  for(var i=1; i<data.length; i++){
+    if(String(data[i][1]) === cleanPhone) {
+      foundRow = i + 1;
+      currentTotal = parseFloat(data[i][2]) || 0;
+      currentCount = parseInt(data[i][3]) || 0;
+      break;
+    }
+  }
+  
+  var today = new Date().toLocaleDateString('id-ID');
+  var orderAmount = parseFloat(amount) || 0;
+  
+  if(foundRow > -1) {
+    sheet.getRange(foundRow, 3).setValue(currentTotal + orderAmount);
+    sheet.getRange(foundRow, 4).setValue(currentCount + 1);
+    sheet.getRange(foundRow, 5).setValue(today);
+  } else {
+    sheet.appendRow([name, cleanPhone, orderAmount, 1, today]);
+  }
+}
+
+function getCustomers() {
+  try {
+    var sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Customers');
+    if(!sheet) return [];
+    return sheet.getDataRange().getDisplayValues();
+  } catch(e) { return []; }
+}
+
+function syncCustomersFromOrders() {
+  try {
+    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var orderSheet = ss.getSheetByName('Orders');
+    if(!orderSheet) return "Sheet Orders belum ada.";
+    
+    var orders = orderSheet.getDataRange().getValues();
+    if(orders.length <= 1) return "Belum ada data pesanan untuk disinkronisasi.";
+    
+    // Map untuk menampung agregasi berdasarkan nomor WA
+    var custMap = {}; 
+    
+    for(var i=1; i<orders.length; i++) {
+      var name = orders[i][2];
+      var phone = String(orders[i][3]).replace(/[^0-9]/g, '');
+      if(!phone) continue;
+      if(phone.startsWith('0')) phone = '62' + phone.substring(1);
+      
+      var amount = parseFloat(orders[i][6]) || 0;
+      var status = orders[i][8];
+      var dateStr = String(orders[i][1]); // Tanggal order
+      
+      // Abaikan pesanan yang dibatalkan
+      if(status === 'Dibatalkan') continue;
+      
+      if(!custMap[phone]) {
+        custMap[phone] = { name: name, total: 0, count: 0, lastOrder: dateStr };
+      }
+      custMap[phone].total += amount;
+      custMap[phone].count += 1;
+      custMap[phone].lastOrder = dateStr; 
+    }
+    
+    // Tulis ulang ke sheet Customers
+    var custSheet = ss.getSheetByName('Customers');
+    if(!custSheet) {
+      custSheet = ss.insertSheet('Customers');
+    }
+    custSheet.clear();
+    custSheet.appendRow(['Nama Pelanggan', 'Nomor WA', 'Total Belanja', 'Jumlah Order', 'Tanggal Terakhir']);
+    custSheet.getRange('A1:E1').setFontWeight('bold');
+    
+    var rowsToInsert = [];
+    for(var key in custMap) {
+       var c = custMap[key];
+       rowsToInsert.push([c.name, key, c.total, c.count, c.lastOrder]);
+    }
+    
+    if(rowsToInsert.length > 0) {
+      custSheet.getRange(2, 1, rowsToInsert.length, 5).setValues(rowsToInsert);
+    }
+    
+    logActivity('Sinkronisasi CRM', 'Merekap ulang data pelanggan dari Orders', 'Admin');
+    return "✅ Berhasil menyinkronkan " + rowsToInsert.length + " pelanggan setia dari riwayat pesanan!";
+  } catch(e) {
+    throw new Error(e.message);
+  }
+}
+// ==========================================
+// INTEGRASI GOOGLE ANALYTICS 4 (NATIVE DASHBOARD)
+// ==========================================
+function getGA4Data() {
+  const settings = getSettingsData();
+  // Menyaring hanya angka (GA4 Data API butuh 'Property ID', bukan 'Measurement ID' yang berawalan G-)
+  const propertyIdStr = String(settings.ga).replace(/[^0-9]/g, ''); 
+  
+  if(!propertyIdStr || propertyIdStr.length < 5) return { success: false, configured: false };
+  
+  try {
+    const propertyId = 'properties/' + propertyIdStr;
+    const request = AnalyticsData.newRunReportRequest();
+    
+    // Tarik 3 Metrik Utama: Pengunjung Aktif, Sesi, dan Tayangan Halaman
+    request.metrics = [
+      { name: 'activeUsers' },
+      { name: 'sessions' },
+      { name: 'screenPageViews' }
+    ];
+    
+    // Dimensi waktu: 30 Hari Terakhir
+    request.dateRanges = [{ startDate: '30daysAgo', endDate: 'today' }];
+    
+    const report = AnalyticsData.Properties.runReport(request, propertyId);
+    
+    if (!report.rows || report.rows.length === 0) {
+      return { success: true, configured: true, users: 0, sessions: 0, views: 0 };
+    }
+    
+    const row = report.rows[0];
+    return {
+      success: true, configured: true,
+      users: row.metricValues[0].value,
+      sessions: row.metricValues[1].value,
+      views: row.metricValues[2].value
+    };
+  } catch (e) {
+    return { success: false, configured: true, error: e.message };
+  }
+}
+
+// ==========================================
+// INTEGRASI GOOGLE MERCHANT CENTER (CONTENT API)
+// ==========================================
+function syncToMerchantCenter(p) {
+  const settings = getSystemConfig();
+  const mId = settings.merchantId ? settings.merchantId.toString().replace(/\s+/g, '') : '';
+  if(!mId || mId.length < 5) return; 
+
+  let safeMainImgUrl = "";
+  try {
+    let imgs = JSON.parse(p.img);
+    if(imgs.length > 0) safeMainImgUrl = getSafeImgUrl(imgs[0]);
+  } catch(e) { 
+    safeMainImgUrl = getSafeImgUrl(p.img);
+  }
+  if(!safeMainImgUrl) safeMainImgUrl = settings.storeLogo;
+
+  let productUrl = p.canonical ? p.canonical : settings.storeUrl + "/p/" + p.slug + ".html";
+  
+  let finalPrice = parseFloat(p.price);
+  if (p.discount && parseFloat(p.discount) > 0 && parseFloat(p.discount) < finalPrice) {
+     finalPrice = parseFloat(p.discount);
+  }
+
+  const productResource = {
+    offerId: p.sku || p.slug,
+    title: p.name,
+    description: p.desc ? p.desc.replace(/<[^>]+>/g, '').substring(0, 4900) : p.name,
+    link: productUrl,
+    imageLink: safeMainImgUrl,
+    contentLanguage: 'id',
+    targetCountry: 'ID',
+    channel: 'online',
+    availability: (p.availability && p.availability.toString().toLowerCase() === 'habis') ? 'out of stock' : 'in stock',
+    condition: 'new',
+    price: { value: finalPrice.toString(), currency: 'IDR' }
+  };
+
+  try {
+    ShoppingContent.Products.insert(productResource, mId);
+    logActivity('Google Merchant API', 'Sinkronisasi produk berhasil: ' + p.name, 'Sistem');
+  } catch(e) {
+    logActivity('Google Merchant API Error', e.message, 'Sistem');
+  }
+}
+// ==========================================
+// MANAJEMEN STAFF CRUD (Hanya untuk Super Admin)
+// ==========================================
+
+function getStaffList() {
+  try {
+    const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Users');
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    let staff = [];
+    
+    // Mulai dari baris 2 (index 1) karena baris 1 adalah header
+    for(let i = 1; i < data.length; i++) {
+      let row = data[i];
+      staff.push({
+        nama: row[headers.indexOf('Nama')] || '',
+        username: row[headers.indexOf('Username')] || '',
+        role: row[headers.indexOf('Role')] || 'Staff',
+        foto: row[headers.indexOf('Foto Profil')] || ''
+      });
+    }
+    return {success: true, data: staff};
+  } catch(e) { return {success: false, message: e.toString()}; }
+}
+
+function saveStaffData(staffData) {
+  try {
+    const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Users');
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    let isNew = true;
+    
+    // Hash password jika diisi (jika kosong saat edit, berarti password tidak diubah)
+    let passToSave = staffData.password ? hashPassword(staffData.password) : "";
+
+    // Cek apakah ini edit staf yang sudah ada
+    for(let i = 1; i < data.length; i++) {
+      if(data[i][headers.indexOf('Username')] == staffData.username) {
+        isNew = false;
+        sheet.getRange(i+1, headers.indexOf('Nama')+1).setValue(staffData.nama);
+        sheet.getRange(i+1, headers.indexOf('Role')+1).setValue(staffData.role);
+        sheet.getRange(i+1, headers.indexOf('Foto Profil')+1).setValue(staffData.foto);
+        if(passToSave !== "") {
+           sheet.getRange(i+1, headers.indexOf('Password')+1).setValue(passToSave);
+        }
+        logActivity('Manajemen Staff', 'Memperbarui data staf: ' + staffData.username, 'Sistem');
+        break;
+      }
+    }
+    
+    // Jika staf baru
+    if(isNew) {
+      if(passToSave === "") return {success: false, message: "Password wajib diisi untuk akun baru!"};
+      let newRow = [];
+      for(let j = 0; j < headers.length; j++) {
+         if(headers[j] == 'Nama') newRow.push(staffData.nama);
+         else if(headers[j] == 'Username') newRow.push(staffData.username);
+         else if(headers[j] == 'Password') newRow.push(passToSave);
+         else if(headers[j] == 'Role') newRow.push(staffData.role);
+         else if(headers[j] == 'Foto Profil') newRow.push(staffData.foto);
+         else newRow.push('');
+      }
+      sheet.appendRow(newRow);
+      logActivity('Manajemen Staff', 'Menambahkan staf baru: ' + staffData.username, 'Sistem');
+    }
+    return {success: true, message: 'Data akun berhasil disimpan!'};
+  } catch(e) { return {success: false, message: e.toString()}; }
+}
+
+function deleteStaffAccount(username) {
+  try {
+    // Keamanan ekstra: Super Admin (Amin) tidak boleh dihapus dari UI
+    if(username.toLowerCase() === 'amin') return {success: false, message: 'Super Admin utama tidak bisa dihapus!'};
+    
+    const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Users');
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    
+    for(let i = 1; i < data.length; i++) {
+      if(data[i][headers.indexOf('Username')] == username) {
+        sheet.deleteRow(i+1);
+        logActivity('Manajemen Staff', 'Menghapus staf: ' + username, 'Sistem');
+        return {success: true, message: 'Akun staf berhasil dihapus!'};
+      }
+    }
+    return {success: false, message: 'Akun tidak ditemukan!'};
+  } catch(e) { return {success: false, message: e.toString()}; }
+}
+// Fungsi Unggah Foto Profil (Revisi menggunakan Drive Advanced Service / Jalur VIP)
+function uploadStaffPhoto(base64Data, filename) {
+  try {
+    const config = getSystemConfig();
+    if(!config.driveId) throw new Error("ID Folder Drive belum diatur di menu Pengaturan!");
+    
+    // Pecah data Base64
+    const parts = base64Data.split(',');
+    const mimeType = parts[0].split(':')[1].split(';')[0];
+    const cleanData = parts[1].replace(/[^A-Za-z0-9+/=]/g, '');
+    
+    // Buat file Blob
+    const blob = Utilities.newBlob(Utilities.base64Decode(cleanData), mimeType, 'Profil_' + Date.now() + '_' + filename);
+    
+    // Proses upload menggunakan API Jalur VIP (Sama persis dengan logo toko)
+    const fileMetadata = { name: blob.getName(), parents: [config.driveId] };
+    const file = Drive.Files.create(fileMetadata, blob);
+    Drive.Permissions.create({ role: 'reader', type: 'anyone' }, file.id);
+    
+    return { success: true, url: "https://drive.google.com/uc?id=" + file.id };
+  } catch(e) {
+    return { success: false, message: e.toString() };
+  }
+}
+
+// ==========================================
+// TAHAP 2: INTEGRASI RAJAONGKIR (CEK ONGKIR OTOMATIS)
+// ==========================================
+function searchLocation(keyword) {
+  const config = getSettingsData();
+  const apiKey = config.rajaOngkirApi;
+  if (!apiKey || apiKey.length < 5) return [];
+
+  // Kita asumsikan menggunakan akun RajaOngkir tipe PRO/Basic untuk mendukung pencarian kecamatan (subdistrict)
+  // Untuk versi Starter, endpointnya adalah /city
+  try {
+    const url = "https://pro.rajaongkir.com/api/subdistrict"; // Pastikan akun PRO/Basic jika butuh kecamatan
+    // Jika menggunakan akun Starter, ubah ke: "https://api.rajaongkir.com/starter/city"
+    
+    // Namun karena RajaOngkir API tidak punya endpoint text-search murni (semua diload lalu difilter manual)
+    // Di sini kita load data kota saja (Starter kompatibel) jika kita mau fallback.
+    // Untuk efisiensi, mari gunakan endpoint city Starter sebagai fallback jika gagal
+    
+    // Untuk demo/implementasi aman kita gunakan Starter City Endpoint karena paling umum
+    const options = {
+      "method": "get",
+      "headers": { "key": apiKey },
+      "muteHttpExceptions": true
+    };
+    
+    // Mencari kota
+    let res = UrlFetchApp.fetch("https://api.rajaongkir.com/starter/city", options);
+    if(res.getResponseCode() == 200) {
+      let data = JSON.parse(res.getContentText()).rajaongkir.results;
+      // Filter berdasarkan keyword
+      let filtered = data.filter(city => city.city_name.toLowerCase().includes(keyword.toLowerCase()));
+      return filtered.map(city => ({
+        id: city.city_id,
+        name: city.type + " " + city.city_name + ", " + city.province
+      })).slice(0, 10); // Ambil 10 teratas
+    } else {
+      // Jika error (misalnya API key salah), kembalikan kosong
+      return [];
+    }
+  } catch(e) {
+    return [];
+  }
+}
+
+function checkShippingCost(destinationId, weightGram) {
+  const config = getSettingsData();
+  const apiKey = config.rajaOngkirApi;
+  if (!apiKey || apiKey.length < 5) return {success: false, message: "API Key RajaOngkir belum diatur."};
+
+  try {
+    const originCityId = config.storeCityId || "501"; // ID Kota Yogyakarta sebagai contoh default jika tidak disetting
+    
+    const payload = {
+      "origin": originCityId, // Harus angka (ID Kota asal)
+      "destination": destinationId,
+      "weight": weightGram || 1000,
+      "courier": "jne" // Default JNE. Pada sistem nyata bisa ditambahkan J&T, POS, dll.
+    };
+
+    const options = {
+      "method": "post",
+      "headers": { "key": apiKey, "content-type": "application/x-www-form-urlencoded" },
+      "payload": payload,
+      "muteHttpExceptions": true
+    };
+
+    let res = UrlFetchApp.fetch("https://api.rajaongkir.com/starter/cost", options);
+    if(res.getResponseCode() == 200) {
+       let data = JSON.parse(res.getContentText()).rajaongkir.results[0];
+       if(!data || !data.costs) return {success: false, message: "Tidak ada rute ekspedisi."};
+       
+       let costs = data.costs.map(c => ({
+          service: data.code.toUpperCase() + " " + c.service,
+          cost: c.cost[0].value,
+          etd: c.cost[0].etd
+       }));
+       
+       return {success: true, data: costs};
+    } else {
+       return {success: false, message: "Error dari server RajaOngkir."};
+    }
+  } catch(e) {
+    return {success: false, message: e.message};
+  }
+}
+
+// ==========================================
+// TAHAP 2: EKSPOR LAPORAN KEUANGAN (PESANAN SELESAI)
+// ==========================================
+function getLaporanKeuangan() {
+  try {
+    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sheet = ss.getSheetByName('Orders');
+    if (!sheet) return [];
+    
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    var statusIdx = headers.indexOf('Status');
+    
+    // Filter pesanan dengan status 'Selesai'
+    var completedOrders = [headers]; // Termasuk header
+    for (var i = 1; i < data.length; i++) {
+       if (data[i][statusIdx] === 'Selesai') {
+           completedOrders.push(data[i]);
+       }
+    }
+    return completedOrders;
+  } catch (e) {
+    return [];
+  }
+}
+
+// ==========================================
+// TAHAP 3: MANAJEMEN TESTIMONI & DRIVE MEDIA
+// ==========================================
+function getTestimonialData() {
+  try {
+    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sheet = ss.getSheetByName('Testimonials');
+    if (!sheet) return [];
+    var data = sheet.getDataRange().getValues();
+    var result = [];
+    for (var i = 1; i < data.length; i++) {
+      result.push({ id: data[i][0], date: data[i][1], name: data[i][2], sku: data[i][3], rating: data[i][4], text: data[i][5] });
+    }
+    return result.reverse();
+  } catch(e) { return []; }
+}
+
+function addTestimonial(name, rating, sku, text) {
+  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var sheet = ss.getSheetByName('Testimonials');
+  if (!sheet) {
+    sheet = ss.insertSheet('Testimonials');
+    sheet.appendRow(['ID', 'Tanggal', 'Nama', 'SKU', 'Rating', 'Ulasan']);
+  }
+  var id = 'REV-' + new Date().getTime();
+  var date = new Date().toLocaleString('id-ID');
+  sheet.appendRow([id, date, name, sku, rating, text]);
+  
+  // Sinkronkan ulang produk ke Blogger untuk memunculkan Bintang (AggregateRating)
+  try {
+     var pSheet = ss.getSheetByName('Products');
+     var pData = pSheet.getDataRange().getValues();
+     for (var i = 1; i < pData.length; i++) {
+         if (pData[i][9] == sku) { // SKU ada di index 9
+             var pObj = { name: pData[i][1], price: pData[i][2], category: pData[i][3], desc: pData[i][4], img: pData[i][5], slug: pData[i][6], metaTitle: pData[i][7], metaDesc: pData[i][8], sku: pData[i][9], stock: pData[i][10], variant: pData[i][11], spec: pData[i][12], tags: pData[i][13], discount: pData[i][14], weight: pData[i][15], unit: pData[i][16], moq: pData[i][17], availability: pData[i][18], faq: pData[i][19], canonical: pData[i][20], youtube: pData[i][26] };
+             var newJsonLd = buildProductJSONLD(pObj);
+             pSheet.getRange(i + 1, 22).setValue(newJsonLd); // Update JSON-LD di sheet
+             
+             var existingPageId = pData[i][22]; // index 22 = bloggerData.id
+             if (existingPageId) {
+                 pObj.jsonLd = newJsonLd;
+                 syncProductToBlogger(pObj, existingPageId);
+             }
+         }
+     }
+  } catch(e) {}
+}
+
+function deleteTestimonial(id) {
+  try {
+    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sheet = ss.getSheetByName('Testimonials');
+    if (!sheet) return;
+    var data = sheet.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      if (data[i][0] == id) {
+        var sku = data[i][3];
+        sheet.deleteRow(i + 1);
+        
+        // Sync ulang agar bintang berkurang/hilang
+        var pSheet = ss.getSheetByName('Products');
+        var pData = pSheet.getDataRange().getValues();
+        for (var j = 1; j < pData.length; j++) {
+            if (pData[j][9] == sku) {
+                var pObj = { name: pData[j][1], price: pData[j][2], category: pData[j][3], desc: pData[j][4], img: pData[j][5], slug: pData[j][6], metaTitle: pData[j][7], metaDesc: pData[j][8], sku: pData[j][9], stock: pData[j][10], variant: pData[j][11], spec: pData[j][12], tags: pData[j][13], discount: pData[j][14], weight: pData[j][15], unit: pData[j][16], moq: pData[j][17], availability: pData[j][18], faq: pData[j][19], canonical: pData[j][20], youtube: pData[j][26] };
+                var newJsonLd = buildProductJSONLD(pObj);
+                pSheet.getRange(j + 1, 22).setValue(newJsonLd);
+                var existingPageId = pData[j][22];
+                if (existingPageId) { pObj.jsonLd = newJsonLd; syncProductToBlogger(pObj, existingPageId); }
+            }
+        }
+        return;
+      }
+    }
+  } catch(e) {}
+}
+
+function getDriveMediaFiles(folderId) {
+  if (!folderId) return [];
+  try {
+    var folder = DriveApp.getFolderById(folderId);
+    var files = folder.getFiles();
+    var result = [];
+    while (files.hasNext()) {
+      var file = files.next();
+      var mimeType = file.getMimeType();
+      if (mimeType.indexOf('image/') === 0 || mimeType.indexOf('video/') === 0) {
+        result.push({
+          id: file.getId(),
+          name: file.getName(),
+          url: "https://drive.google.com/uc?id=" + file.getId(),
+          thumbnail: getSafeImgUrl(file.getUrl())
+        });
+      }
+    }
+    return result;
+  } catch (e) {
+    throw new Error("Folder Drive tidak ditemukan atau tidak ada akses.");
+  }
+}
+
+function uploadMediaToDrive(base64Data, fileName, folderId) {
+  try {
+    var folder = DriveApp.getFolderById(folderId);
+    var blob = Utilities.newBlob(Utilities.base64Decode(base64Data), "image/jpeg", fileName);
+    var file = folder.createFile(blob);
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    return { success: true, url: "https://drive.google.com/uc?id=" + file.getId() };
+  } catch (e) {
+    return { success: false, message: e.toString() };
+  }
+}
+
+function deleteDriveFile(fileId) {
+  try {
+    DriveApp.getFileById(fileId).setTrashed(true);
+    return true;
+  } catch(e) {
+    return false;
+  }
+}
+
+// ==========================================
+// FLASH SALE & COUNTDOWN TIMER
+// ==========================================
+function saveFlashSaleData(data) {
+  try {
+    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sheet = ss.getSheetByName('FlashSale');
+    if (!sheet) {
+      sheet = ss.insertSheet('FlashSale');
+      sheet.appendRow(['Nama Sesi', 'Tanggal', 'Sesi Waktu', 'Produk']);
+      sheet.getRange('A1:D1').setFontWeight('bold');
+    }
+    sheet.appendRow([data.name, data.date, data.sessions, data.products]);
+    SpreadsheetApp.flush();
+    logActivity('Flash Sale', 'Jadwal flash sale baru ditambahkan: ' + data.name, 'Admin');
+    return "Flash Sale berhasil disimpan!";
+  } catch(e) {
+    throw new Error("Gagal menyimpan flash sale: " + e.message);
+  }
+}
+
+function getFlashSales() {
+  try {
+    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sheet = ss.getSheetByName('FlashSale');
+    if (!sheet) return [];
+    var data = sheet.getDataRange().getValues();
+    // Tambahkan nomor baris ke setiap data (untuk keperluan hapus)
+    var result = [data[0]];
+    for (var i = 1; i < data.length; i++) {
+      var row = data[i].slice();
+      row.push(i + 1); // Row number (1-indexed, skip header)
+      result.push(row);
+    }
+    return result;
+  } catch(e) {
+    return [];
+  }
+}
+
+function deleteFlashSaleData(rowNumber) {
+  try {
+    var sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('FlashSale');
+    sheet.deleteRow(rowNumber);
+    SpreadsheetApp.flush();
+    logActivity('Flash Sale', 'Jadwal flash sale dihapus pada baris: ' + rowNumber, 'Admin');
+    return "Flash Sale berhasil dihapus!";
+  } catch(e) {
+    throw new Error("Gagal menghapus: " + e.message);
+  }
+}
+
+// ==========================================
+// LAPORAN KEUANGAN (PESANAN SELESAI)
+// ==========================================
+function getLaporanKeuangan() {
+  try {
+    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sheet = ss.getSheetByName('Orders');
+    if (!sheet) return [];
+    var data = sheet.getDataRange().getValues();
+    // Filter hanya pesanan berstatus "Selesai"
+    var result = [data[0]]; // Header
+    for (var i = 1; i < data.length; i++) {
+      if (data[i][8] && data[i][8].toString().toLowerCase() === 'selesai') {
+        result.push(data[i]);
+      }
+    }
+    return result;
+  } catch(e) {
+    return [];
+  }
+}
