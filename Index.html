@@ -2166,18 +2166,24 @@
         msg.style.color = "var(--primary)"; 
         msg.innerText = "Memverifikasi data...";
         
-        google.script.run.withSuccessHandler(function(ok) {
-          if (ok && ok.success) { 
-          localStorage.setItem('userSession', JSON.stringify(ok));
-          document.getElementById('loginArea').style.display = 'none'; 
-          document.getElementById('dashboardArea').style.display = 'flex'; 
-          applyUserSession();
-          loadAllAppContent(); 
-          } else { 
+        google.script.run
+          .withSuccessHandler(function(ok) {
+            if (ok && ok.success) { 
+              localStorage.setItem('userSession', JSON.stringify(ok));
+              document.getElementById('loginArea').style.display = 'none'; 
+              document.getElementById('dashboardArea').style.display = 'flex'; 
+              applyUserSession();
+              loadAllAppContent(); 
+            } else { 
               msg.style.color = "var(--danger)"; 
-              msg.innerText = "Username atau Password salah!"; 
-          }
-        }).verifyLogin(u, p);
+              msg.innerText = (ok && ok.message) ? ok.message : "Username atau Password salah!"; 
+            }
+          })
+          .withFailureHandler(function(err) {
+            msg.style.color = "var(--danger)";
+            msg.innerText = "Error Server: " + err.message;
+          })
+          .verifyLogin(u, p);
       }
       
       function toggleProfilePopup() { 
@@ -2555,7 +2561,7 @@ function logoutDashboard() {
               if(data && data.length > 1) {
                   orderProductCache = [];
                   for(var i = 1; i < data.length; i++) {
-                      orderProductCache.push({ name: data[i][0] || '', price: data[i][3] || 0 });
+                      orderProductCache.push({ name: data[i][1] || '', price: data[i][2] || 0 });
                   }
               }
           }).getProducts();
@@ -2706,9 +2712,15 @@ function editOrder(idx) {
   var dateVal = o[1]; 
 try { 
   if(dateVal) { 
-     document.getElementById('oDate').value = new Date().toISOString().split('T')[0]; 
+     // Konversi tanggal dari data ke format YYYY-MM-DD untuk input[type=date]
+     var parsedDate = new Date(dateVal);
+     if (!isNaN(parsedDate.getTime())) {
+       document.getElementById('oDate').value = parsedDate.toISOString().split('T')[0];
+     } else {
+       document.getElementById('oDate').value = new Date().toISOString().split('T')[0];
+     }
   } 
-} catch(e){}
+} catch(e){ document.getElementById('oDate').value = new Date().toISOString().split('T')[0]; }
   
   document.getElementById('oName').value = o[2]; 
   document.getElementById('oPhone').value = o[3];
@@ -2878,26 +2890,6 @@ function generateTagihanAI(orderId, name, amount, phone) {
             customAlert("Gagal AI: " + err.message);
         }).callGeminiAI(prompt, true);
     });
-}
-
-function exportLaporanSelesai() {
-    google.script.run.withSuccessHandler(function(data) {
-        if(!data || data.length === 0) { customAlert("Belum ada data pesanan Selesai."); return; }
-        
-        let csvContent = "data:text/csv;charset=utf-8,";
-        data.forEach(function(rowArray) {
-            let row = rowArray.map(item => `"${(item||'').toString().replace(/"/g, '""')}"`).join(",");
-            csvContent += row + "\\r\\n";
-        });
-        
-        var encodedUri = encodeURI(csvContent);
-        var link = document.createElement("a");
-        link.setAttribute("href", encodedUri);
-        link.setAttribute("download", "Laporan_Keuangan_Selesai.csv");
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-    }).getLaporanKeuangan();
 }
 
 function analyzeLaporanAI() {

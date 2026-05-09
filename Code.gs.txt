@@ -262,7 +262,7 @@ function callGeminiAI(prompt, isHtmlMode) {
   const cleanApiKey = String(config.geminiApi).trim();
   
   // PERUBAHAN DI SINI: Menyesuaikan persis dengan cURL Google AI Studio Anda
-  const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=" + cleanApiKey;
+  const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + cleanApiKey;
   
   let finalPrompt = prompt;
   if (isHtmlMode) {
@@ -1626,7 +1626,7 @@ function syncToMerchantCenter(p) {
     contentLanguage: 'id',
     targetCountry: 'ID',
     channel: 'online',
-    availability: (p.availability && p.availability.toString().toLowerCase() === 'habis') ? 'out of stock' : 'in stock',
+    availability: (p.availability && (p.availability.toString().includes('OutOfStock') || p.availability.toString().toLowerCase() === 'habis')) ? 'out of stock' : 'in stock',
     condition: 'new',
     price: { value: finalPrice.toString(), currency: 'IDR' }
   };
