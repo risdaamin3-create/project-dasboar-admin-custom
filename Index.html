@@ -2552,10 +2552,11 @@ function logoutDashboard() {
       var orderProductCache = [];
       function loadOrderProductCache() {
           google.script.run.withSuccessHandler(function(data) {
-              if(data && data.length > 1) {
+              if(data && data.length > 0) {
                   orderProductCache = [];
-                  for(var i = 1; i < data.length; i++) {
-                      orderProductCache.push({ name: data[i][0] || '', price: data[i][3] || 0 });
+                  for(var i = 0; i < data.length; i++) {
+                      // getProducts() returns: [0]=tanggal, [1]=nama, [2]=harga, [3]=kategori, ...
+                      orderProductCache.push({ name: data[i][1] || '', price: data[i][2] || 0 });
                   }
               }
           }).getProducts();
@@ -2706,9 +2707,15 @@ function editOrder(idx) {
   var dateVal = o[1]; 
 try { 
   if(dateVal) { 
-     document.getElementById('oDate').value = new Date().toISOString().split('T')[0]; 
+     // Gunakan tanggal asli dari data pesanan, bukan tanggal hari ini
+     var parsedDate = new Date(dateVal);
+     if(!isNaN(parsedDate.getTime())) {
+       document.getElementById('oDate').value = parsedDate.toISOString().split('T')[0];
+     } else {
+       document.getElementById('oDate').value = new Date().toISOString().split('T')[0];
+     }
   } 
-} catch(e){}
+} catch(e){ document.getElementById('oDate').value = new Date().toISOString().split('T')[0]; }
   
   document.getElementById('oName').value = o[2]; 
   document.getElementById('oPhone').value = o[3];
@@ -4299,21 +4306,23 @@ function saveTestimoni() {
     let tText = document.getElementById('tText').value;
     if(!tName || !tSKU || !tText) { customAlert("Nama, SKU, dan Ulasan wajib diisi!"); return; }
     
-    let btn = event.currentTarget;
-    btn.innerHTML = '<span class="material-icons-round spin-icon">autorenew</span> Menyimpan...';
-    btn.disabled = true;
+    // Gunakan querySelector yang lebih aman daripada event.currentTarget
+    let btn = document.querySelector('#view-testimoni .btn-primary[onclick="saveTestimoni()"]');
+    if(!btn) btn = document.querySelector('#view-testimoni .btn-primary');
+    if(btn) {
+      btn.innerHTML = '<span class="material-icons-round spin-icon">autorenew</span> Menyimpan...';
+      btn.disabled = true;
+    }
     
     google.script.run.withSuccessHandler(function() {
-        btn.innerHTML = '<span class="material-icons-round">save</span> Simpan Ulasan';
-        btn.disabled = false;
+        if(btn) { btn.innerHTML = '<span class="material-icons-round">save</span> Simpan Ulasan'; btn.disabled = false; }
         document.getElementById('tName').value = '';
         document.getElementById('tSKU').value = '';
         document.getElementById('tText').value = '';
         customAlert("Ulasan berhasil disimpan dan SEO Bintang diperbarui.");
         loadTestimoni();
     }).withFailureHandler(function(err) {
-        btn.innerHTML = '<span class="material-icons-round">save</span> Simpan Ulasan';
-        btn.disabled = false;
+        if(btn) { btn.innerHTML = '<span class="material-icons-round">save</span> Simpan Ulasan'; btn.disabled = false; }
         customAlert("Gagal: " + err.message);
     }).addTestimonial(tName, tRating, tSKU, tText);
 }

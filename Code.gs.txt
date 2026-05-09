@@ -262,7 +262,7 @@ function callGeminiAI(prompt, isHtmlMode) {
   const cleanApiKey = String(config.geminiApi).trim();
   
   // PERUBAHAN DI SINI: Menyesuaikan persis dengan cURL Google AI Studio Anda
-  const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=" + cleanApiKey;
+  const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=" + cleanApiKey;
   
   let finalPrompt = prompt;
   if (isHtmlMode) {
@@ -506,7 +506,7 @@ function syncProductToBlogger(p, existingPageId) {
 
   let ogMeta = '<!-- Open Graph Meta Tags -->\n' +
   '<meta property="og:title" content="' + p.name + '">\n' +
-  '<meta property="og:description" content="' + p.desc.substring(0, 150) + '...">\n' +
+  '<meta property="og:description" content="' + (p.desc ? p.desc.replace(/<[^>]+>/g, '').substring(0, 150) : p.name) + '...">\n' +
   '<meta property="og:image" content="' + safeMainImgUrl + '">\n' +
   '<meta property="og:type" content="product">\n' +
   '<meta name="twitter:card" content="summary_large_image">';
@@ -813,8 +813,8 @@ function getOrders() {
     var sheet = ss.getSheetByName('Orders');
     if (!sheet) {
       sheet = ss.insertSheet('Orders');
-      sheet.appendRow(['ID Pesanan', 'Tanggal', 'Nama Pelanggan', 'No WA', 'Alamat Pelanggan', 'Produk', 'Total Harga', 'Ekspedisi', 'Status', 'No Resi']);
-      sheet.getRange('A1:J1').setFontWeight('bold');
+      sheet.appendRow(['ID Pesanan', 'Tanggal', 'Nama Pelanggan', 'No WA', 'Alamat Pelanggan', 'Produk', 'Total Harga', 'Ekspedisi', 'Status', 'No Resi', 'Ongkir', 'Pembayaran']);
+      sheet.getRange('A1:L1').setFontWeight('bold');
     }
     // PERBAIKAN: Menggunakan getDisplayValues() agar tanggal & angka terkirim sebagai teks murni yang aman
     const data = sheet.getDataRange().getDisplayValues();
@@ -858,6 +858,7 @@ function saveOrderData(row, id, date, name, phone, address, item, amount, status
 
 function deleteOrder(rowNumber) {
   var sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Orders');
+  if (!sheet) throw new Error("Sheet 'Orders' tidak ditemukan!");
   sheet.deleteRow(rowNumber);
   logActivity('Hapus Pesanan', 'Menghapus data pesanan pada baris: ' + rowNumber, 'Admin');
   
@@ -1838,32 +1839,6 @@ function checkShippingCost(destinationId, weightGram) {
 }
 
 // ==========================================
-// TAHAP 2: EKSPOR LAPORAN KEUANGAN (PESANAN SELESAI)
-// ==========================================
-function getLaporanKeuangan() {
-  try {
-    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-    var sheet = ss.getSheetByName('Orders');
-    if (!sheet) return [];
-    
-    var data = sheet.getDataRange().getValues();
-    var headers = data[0];
-    var statusIdx = headers.indexOf('Status');
-    
-    // Filter pesanan dengan status 'Selesai'
-    var completedOrders = [headers]; // Termasuk header
-    for (var i = 1; i < data.length; i++) {
-       if (data[i][statusIdx] === 'Selesai') {
-           completedOrders.push(data[i]);
-       }
-    }
-    return completedOrders;
-  } catch (e) {
-    return [];
-  }
-}
-
-// ==========================================
 // TAHAP 3: MANAJEMEN TESTIMONI & DRIVE MEDIA
 // ==========================================
 function getTestimonialData() {
@@ -1909,6 +1884,8 @@ function addTestimonial(name, rating, sku, text) {
          }
      }
   } catch(e) {}
+  logActivity('Tambah Testimoni', 'Ulasan baru ditambahkan untuk SKU: ' + sku, name);
+  return "Ulasan berhasil disimpan!";
 }
 
 function deleteTestimonial(id) {
