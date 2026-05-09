@@ -108,6 +108,8 @@
       input, select, textarea { width: 100%; padding: 14px 16px; border: 1px solid var(--border-color); border-radius: 10px; font-family: 'Inter'; font-size: 14.5px; background: #f8fafc; box-sizing: border-box; transition: 0.2s; color: var(--text-dark); }
       select { padding-right: 36px; -webkit-appearance: none; -moz-appearance: none; appearance: none; background: #f8fafc url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2364748b' d='M2 4l4 4 4-4'/%3E%3C/svg%3E") no-repeat right 14px center / 12px !important; }
       body[data-theme="dark"] select { background: #0f172a url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2394a3b8' d='M2 4l4 4 4-4'/%3E%3C/svg%3E") no-repeat right 14px center / 12px !important; }
+      body[data-theme="dark"] input[type="date"]::-webkit-calendar-picker-indicator, body[data-theme="dark"] input[type="time"]::-webkit-calendar-picker-indicator { filter: invert(1); }
+      @media (min-width: 769px) { #mobile-page-actions, #mobile-blog-actions, #mobile-settings-save { display: none !important; } }
       input:focus, select:focus, textarea:focus { outline: none; border-color: var(--primary); background: var(--card-bg); box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.1); }
       
       /* SEO Bar */
@@ -671,14 +673,26 @@
               <span class="material-icons-round" style="font-size:18px;">list_alt</span> Daftar Produk
           </a>
         </div>
-        <p class="menu-label">Penjualan & Pemasaran</p>
+        <p class="menu-label">Penjualan</p>
         <div class="dropdown-btn" onclick="toggleDropdown('salesDrop', this)">
             <span class="material-icons-round">storefront</span> Penjualan <span class="material-icons-round" style="margin-left:auto; font-size:18px;">expand_more</span>
         </div>
-        <div class="dropdown-container" id="salesDrop" style="display:block;">
+        <div class="dropdown-container" id="salesDrop" style="display:none;">
           <a onclick="showView('view-pesanan', 'Manajemen Pesanan (CRM)', 'Kelola status pesanan dan kirim pesan WA otomatis ke pelanggan.', this)">
               <span class="material-icons-round" style="font-size:18px;">shopping_cart_checkout</span> Pesanan Masuk
           </a>
+          <a onclick="showView('view-crm', 'Database Pelanggan (CRM)', 'Kelola pelanggan loyal dan kirim pesan promosi otomatis.', this)">
+              <span class="material-icons-round" style="font-size:18px;">group</span> Database Pelanggan
+          </a>
+          <a onclick="showView('view-testimoni', 'Manajemen Testimoni', 'Kelola ulasan pelanggan untuk menaikkan SEO Bintang Produk.', this)">
+              <span class="material-icons-round" style="font-size:18px;">star_rate</span> Testimoni & Ulasan
+          </a>
+        </div>
+        <p class="menu-label">Alat Promosi</p>
+        <div class="dropdown-btn" onclick="toggleDropdown('promoDrop', this)">
+            <span class="material-icons-round">campaign</span> Promosi <span class="material-icons-round" style="margin-left:auto; font-size:18px;">expand_more</span>
+        </div>
+        <div class="dropdown-container" id="promoDrop" style="display:none;">
           <a onclick="showView('view-flashsale', 'Flash Sale & Countdown Timer', 'Kelola jadwal sesi flash sale, produk diskon, dan countdown otomatis.', this)">
               <span class="material-icons-round" style="font-size:18px;">bolt</span> Flash Sale
           </a>
@@ -688,18 +702,12 @@
           <a onclick="showView('view-quotation', 'Generator Surat Penawaran (AI)', 'Buat surat penawaran harga B2B dengan bantuan AI secara otomatis.', this)">
               <span class="material-icons-round" style="font-size:18px;">request_quote</span> Surat Penawaran (B2B)
           </a>
-          <a onclick="showView('view-crm', 'Database Pelanggan (CRM)', 'Kelola pelanggan loyal dan kirim pesan promosi otomatis.', this)">
-              <span class="material-icons-round" style="font-size:18px;">group</span> Database Pelanggan
-          </a>
-          <a onclick="showView('view-testimoni', 'Manajemen Testimoni', 'Kelola ulasan pelanggan untuk menaikkan SEO Bintang Produk.', this)">
-              <span class="material-icons-round" style="font-size:18px;">star_rate</span> Testimoni & Ulasan
-          </a>
         </div>
         <p class="menu-label">Konten</p>
         <div class="dropdown-btn" onclick="toggleDropdown('contentDrop', this)">
             <span class="material-icons-round">article</span> Konten Web <span class="material-icons-round" style="margin-left:auto; font-size:18px;">expand_more</span>
         </div>
-        <div class="dropdown-container" id="contentDrop" style="display:block;">
+        <div class="dropdown-container" id="contentDrop" style="display:none;">
           <a onclick="showView('view-halaman', 'Manajemen Halaman Statis', 'Kelola halaman profil, kontak, kebijakan privasi, dll.', this)">
               <span class="material-icons-round" style="font-size:18px;">web</span> Halaman
           </a>
@@ -827,10 +835,7 @@
                       <div class="form-group" style="margin-bottom:0;"><label>Harga Normal (Rp) <span style="color:var(--danger)">*</span></label><input type="number" id="pPrice" placeholder="50000"></div>
                       <div class="form-group" style="margin-bottom:0;"><label>Harga Diskon (Rp)</label><input type="number" id="pDiscount" placeholder="Opsional"></div>
                     </div>
-                    <div class="form-group">
-                      <label>Batas Waktu Promo (Flash Sale)</label>
-                      <input type="datetime-local" id="pPromoTimer" style="color-scheme: light dark;">
-                    </div>
+                    <input type="hidden" id="pPromoTimer">
                     
                     <div class="form-group">
                       <label style="margin-bottom: 8px;">Spesifikasi Produk Modern</label>
@@ -972,7 +977,7 @@
                         <!-- PERBAIKAN: Tombol AI Meta Title ditambahkan di sini -->
                         <label style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                             <span>Meta Title</span>
-                            <button class="btn-magic" onclick="magicWriteMeta('product')" type="button"><span class="material-icons-round" style="font-size:14px;">auto_awesome</span> Magic SEO</button>
+                            <button class="btn-magic" onclick="magicWriteMeta('product', 'title')" type="button"><span class="material-icons-round" style="font-size:14px;">auto_awesome</span> Magic SEO</button>
                         </label>
                         <input type="text" id="pMetaTitle" oninput="checkSEO(this, 'pMetaTBar', 15, 60)" placeholder="Judul untuk mesin pencari Google">
                         <div class="seo-progress-bg"><div id="pMetaTBar" class="seo-progress-fill"></div></div>
@@ -981,7 +986,7 @@
                         <!-- PERBAIKAN: Tombol AI Meta Description ditambahkan di sini -->
                         <label style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                             <span>Meta Description</span>
-                            <button class="btn-magic" onclick="magicWriteMeta('product')" type="button"><span class="material-icons-round" style="font-size:14px;">auto_awesome</span> Magic SEO</button>
+                            <button class="btn-magic" onclick="magicWriteMeta('product', 'desc')" type="button"><span class="material-icons-round" style="font-size:14px;">auto_awesome</span> Magic SEO</button>
                         </label>
                         <textarea id="pMetaDesc" style="height:100px;" oninput="checkSEO(this, 'pMetaDBar', 50, 160)" placeholder="Tuliskan 1-2 kalimat menarik tentang produk ini..."></textarea>
                         <div class="seo-progress-bg"><div id="pMetaDBar" class="seo-progress-fill"></div></div>
@@ -1097,15 +1102,19 @@
 
                   <div class="form-group" style="margin-bottom:16px;">
                     <label>Daftar Produk Dipesan</label>
-                    <div style="display: flex; gap: 8px; margin-bottom: 4px; flex-wrap: wrap;">
+                    <div style="display: flex; gap: 8px; margin-bottom: 4px; flex-wrap: wrap; align-items: flex-end;">
                       <div style="flex:2; min-width:140px; position:relative;">
-                        <input type="text" id="tempItemName" placeholder="Cari nama produk..." autocomplete="off" onkeyup="searchOrderProduct(this.value)">
+                        <div style="font-size:10px; color:var(--text-light); margin-bottom:2px;">Pencarian Produk</div>
+                        <input type="text" id="tempItemName" placeholder="Cari nama produk/SKU..." autocomplete="off" onkeyup="searchGlobalProduct(this.value, 'tempItemName', 'tempItemPrice', 'orderProdDropdown', 'price')">
                         <div id="orderProdDropdown" style="display:none; position:absolute; background:var(--card-bg); border:1px solid var(--border-color); width:100%; max-height:180px; overflow-y:auto; z-index:1000; border-radius:6px; box-shadow:0 4px 12px rgba(0,0,0,0.1);"></div>
                       </div>
-                      <input type="text" id="tempItemVariant" placeholder="Varian" style="flex:1; min-width:80px;">
+                      <div style="flex:1; min-width:80px;">
+                        <div style="font-size:10px; color:var(--text-light); margin-bottom:2px;">Varian</div>
+                        <input type="text" id="tempItemVariant" placeholder="Varian" style="width:100%;">
+                      </div>
                       <div style="width:70px;"><div style="font-size:10px; color:var(--text-light); margin-bottom:2px;">Jumlah</div><input type="number" id="tempItemQty" placeholder="Qty" value="1" style="width:100%;"></div>
                       <div style="flex:1; min-width:100px;"><div style="font-size:10px; color:var(--text-light); margin-bottom:2px;">Harga (bisa diedit)</div><input type="number" id="tempItemPrice" placeholder="Harga Satuan" style="width:100%;"></div>
-                      <button type="button" class="btn-primary" onclick="addOrderItem()" style="padding: 10px 16px; align-self:flex-end; white-space:nowrap;">Tambahkan Produk</button>
+                      <button type="button" class="btn-primary" onclick="addOrderItem()" style="padding: 10px 16px; white-space:nowrap;">Tambahkan Produk</button>
                     </div>
                     <div id="orderItemsContainer" style="background: #f8fafc; border: 1px dashed var(--border-color); border-radius: 8px; padding: 10px; min-height: 50px;">
                         <div style="color:var(--text-light); font-size:13px; text-align:center;">Belum ada produk ditambahkan</div>
@@ -1600,7 +1609,10 @@
                 
                 <label style="font-weight:bold; font-size:13px; margin-bottom:8px; display:block;">Daftar Produk Penawaran</label>
                 <div style="display:flex; gap:8px; margin-bottom:8px;">
-                  <input type="text" id="quoItemName" placeholder="Nama Produk" style="flex:2;">
+                  <div style="flex:2; position:relative;">
+                      <input type="text" id="quoItemName" placeholder="Ketik nama produk..." autocomplete="off" onkeyup="searchGlobalProduct(this.value, 'quoItemName', 'quoItemPrice', 'quoProdDropdown', 'price')" style="width:100%;">
+                      <div id="quoProdDropdown" style="display:none; position:absolute; background:var(--card-bg); border:1px solid var(--border-color); width:100%; max-height:180px; overflow-y:auto; z-index:1000; border-radius:6px; box-shadow:0 4px 12px rgba(0,0,0,0.1);"></div>
+                  </div>
                   <input type="text" id="quoItemVariant" placeholder="Varian" style="flex:1;">
                   <input type="number" id="quoItemQty" placeholder="Qty" style="width:70px;" value="1">
                   <input type="number" id="quoItemPrice" placeholder="Harga Satuan" style="flex:1;">
@@ -1692,9 +1704,11 @@
 
                 <label style="font-weight:bold; font-size:13px; display:flex; align-items:center; gap:6px; margin-bottom:12px;"><span class="material-icons-round" style="font-size:16px; color:var(--primary);">local_offer</span> Produk Flash Sale</label>
                 <div style="display:flex; gap:8px; margin-bottom:8px;">
-                  <select id="fsProductSelect" style="flex:3;">
-                    <option value="">-- Pilih Produk dari Katalog --</option>
-                  </select>
+                  <div style="flex:3; position:relative;">
+                      <input type="text" id="fsProductSearch" placeholder="Ketik nama produk..." autocomplete="off" onkeyup="searchGlobalProduct(this.value, 'fsProductSearch', 'fsProductSelect', 'fsProdDropdown', 'fs')" style="width:100%;">
+                      <input type="hidden" id="fsProductSelect">
+                      <div id="fsProdDropdown" style="display:none; position:absolute; background:var(--card-bg); border:1px solid var(--border-color); width:100%; max-height:180px; overflow-y:auto; z-index:1000; border-radius:6px; box-shadow:0 4px 12px rgba(0,0,0,0.1);"></div>
+                  </div>
                   <input type="number" id="fsDiscount" placeholder="Diskon %" style="width:90px;">
                   <button type="button" class="btn-primary" onclick="addFsProduct()" style="padding:10px 16px; white-space:nowrap;">Tambahkan Produk</button>
                 </div>
@@ -1750,7 +1764,7 @@
                   <label>Ulasan Pelanggan</label>
                   <textarea id="tText" style="height:80px;" placeholder="Tuliskan ulasan asli dari pelanggan..."></textarea>
                 </div>
-                <button class="btn-primary" style="width: 100%; justify-content: center;" onclick="saveTestimoni()">
+                <button class="btn-primary" id="btnSaveTestimoni" style="width: 100%; justify-content: center;" onclick="saveTestimoni(this)">
                     <span class="material-icons-round">save</span> Simpan Ulasan
                 </button>
               </div>
@@ -2452,6 +2466,9 @@ function logoutDashboard() {
       function handleTagKey(e) { if(e.key === 'Enter') { e.preventDefault(); var v = e.target.value.trim(); if(v && !blogLabels.includes(v)) { blogLabels.push(v); e.target.value = ''; renderBlogTags(); } } }
       function renderBlogTags() { var c = document.getElementById('tagCont'); var i = document.getElementById('tagInput'); var oldPills = c.querySelectorAll('.tag-pill'); for (var k = 0; k < oldPills.length; k++) { oldPills[k].remove(); } i.placeholder = blogLabels.length === 0 ? "Ketik lalu tekan Enter..." : ""; blogLabels.forEach(function(t, idx) { var p = document.createElement('div'); p.className = 'tag-pill'; p.innerHTML = t + ' <span onclick="blogLabels.splice(' + idx + ',1);renderBlogTags()">×</span>'; c.insertBefore(p, i); }); }
       
+      let cachedBlogPosts = [];
+      let currentEditPostId = null;
+
       function publishPost(isDraft) { 
           var title = document.getElementById('postTitle').value; 
           var text = quill.getText().trim(); 
@@ -2459,11 +2476,39 @@ function logoutDashboard() {
           showMessage('blogMsg', isDraft ? 'Menyimpan sebagai draf cadangan...' : 'Memublikasikan artikel ke server...', false); 
           google.script.run.withSuccessHandler(function(res) { 
               showMessage('blogMsg', res, res.includes('Error')); 
-              if (!res.includes('Error')) { document.getElementById('postTitle').value = ''; document.getElementById('postLocation').value = ''; document.getElementById('postPermalink').value = ''; document.getElementById('postMeta').value = ''; document.getElementById('postCanonical').value = ''; quill.setContents([]); setTimeout(showBlogList, 2000); } 
-          }).publishBlogPost(title, quill.root.innerHTML, blogLabels.join(','), document.getElementById('postMeta').value, document.getElementById('postDate').value, document.getElementById('postLocation').value, document.getElementById('postPermalink').value, isDraft, document.getElementById('postCanonical').value); 
+              if (!res.includes('Error')) { 
+                  document.getElementById('postTitle').value = ''; 
+                  document.getElementById('postLocation').value = ''; 
+                  document.getElementById('postPermalink').value = ''; 
+                  document.getElementById('postMeta').value = ''; 
+                  document.getElementById('postCanonical').value = ''; 
+                  quill.setContents([]); 
+                  currentEditPostId = null;
+                  setTimeout(showBlogList, 2000); 
+              } 
+          }).publishBlogPost(title, quill.root.innerHTML, blogLabels.join(','), document.getElementById('postMeta').value, document.getElementById('postDate').value, document.getElementById('postLocation').value, document.getElementById('postPermalink').value, isDraft, document.getElementById('postCanonical').value, currentEditPostId); 
+      }
+
+      function editPost(id) {
+          let p = cachedBlogPosts.find(function(x) { return x.id === id; });
+          if(!p) return;
+          currentEditPostId = p.id;
+          document.getElementById('postTitle').value = p.title || '';
+          let rawContent = p.content || '';
+          let cleanContent = rawContent.replace(/<script type="application\/ld\+json">[\s\S]*?<\/script>/gi, '').replace(/<link rel="canonical"[^>]*>/gi, '').trim();
+          quill.clipboard.dangerouslyPasteHTML(cleanContent);
+          blogLabels = p.labels || [];
+          renderBlogTags();
+          document.getElementById('postMeta').value = p.customMetaData || '';
+          if(p.published) document.getElementById('postDate').value = p.published.substring(0, 16);
+          document.getElementById('postLocation').value = (p.location && p.location.name) ? p.location.name : '';
+          document.getElementById('blogListCont').style.display = 'none';
+          document.getElementById('blogFormCont').style.display = 'block';
+          setupTopbarActions('view-tambah-artikel');
+          window.scrollTo({top: 0, behavior: 'smooth'});
       }
       
-      function loadBlogPosts() { var tb = document.getElementById('blogTbody'); tb.innerHTML = '<tr><td colspan="4" style="text-align:center; padding: 40px; color:var(--text-light);">Menyinkronkan CMS...</td></tr>'; google.script.run.withSuccessHandler(function(res) { if (!res.success) { tb.innerHTML = '<tr><td colspan="4" style="text-align:center; color:var(--danger); padding:20px;">Gagal: ' + res.message + '</td></tr>'; return; } tb.innerHTML = ''; if (res.data.length === 0) { tb.innerHTML = '<tr><td colspan="4" style="text-align:center; padding: 40px; color:var(--text-light);">Blogger Anda kosong.</td></tr>'; return; } res.data.forEach(function(p) { var isDraft = !p.url; var statusBadge = isDraft ? '<span class="badge badge-danger">DRAF</span>' : '<span class="badge badge-success">LIVE KONTEN</span>'; var date = new Date(p.published).toLocaleDateString('id-ID', {day: 'numeric', month: 'short', year: 'numeric'}); var labelsHtml = ''; if (p.labels) { labelsHtml = p.labels.map(function(l) { return '<span style="background:rgba(79,70,229,0.1); color:var(--primary); padding:4px 8px; border-radius:4px; font-size:11px; font-weight:600; margin-right:6px;">' + l + '</span>'; }).join(''); } var btnView = isDraft ? '' : '<a href="' + p.url + '" target="_blank" class="action-btn" title="Kunjungi Artikel" style="color:var(--primary); margin-right:6px;"><span class="material-icons-round" style="font-size:18px;">open_in_new</span></a>'; let row = '<tr><td><b style="color:var(--text-dark); font-size:15px;">' + p.title + '</b><br><small style="color:var(--text-light);">' + date + '</small></td><td>' + labelsHtml + '</td><td>' + statusBadge + '</td><td style="text-align:center;">' + btnView + '<button class="action-btn btn-delete" onclick="delPost(\'' + p.id + '\')"><span class="material-icons-round" style="font-size:18px;">delete</span></button></td></tr>'; tb.innerHTML += row; }); }).getBlogPosts(); }
+      function loadBlogPosts() { var tb = document.getElementById('blogTbody'); tb.innerHTML = '<tr><td colspan="4" style="text-align:center; padding: 40px; color:var(--text-light);">Menyinkronkan CMS...</td></tr>'; google.script.run.withSuccessHandler(function(res) { if (!res.success) { tb.innerHTML = '<tr><td colspan="4" style="text-align:center; color:var(--danger); padding:20px;">Gagal: ' + res.message + '</td></tr>'; return; } cachedBlogPosts = res.data || []; tb.innerHTML = ''; if (res.data.length === 0) { tb.innerHTML = '<tr><td colspan="4" style="text-align:center; padding: 40px; color:var(--text-light);">Blogger Anda kosong.</td></tr>'; return; } res.data.forEach(function(p) { var isDraft = !p.url; var statusBadge = isDraft ? '<span class="badge badge-danger">DRAF</span>' : '<span class="badge badge-success">LIVE KONTEN</span>'; var date = new Date(p.published).toLocaleDateString('id-ID', {day: 'numeric', month: 'short', year: 'numeric'}); var labelsHtml = ''; if (p.labels) { labelsHtml = p.labels.map(function(l) { return '<span style="background:rgba(79,70,229,0.1); color:var(--primary); padding:4px 8px; border-radius:4px; font-size:11px; font-weight:600; margin-right:6px;">' + l + '</span>'; }).join(''); } var btnView = isDraft ? '' : '<a href="' + p.url + '" target="_blank" class="action-btn" title="Kunjungi Artikel" style="color:var(--primary); margin-right:6px;"><span class="material-icons-round" style="font-size:18px;">open_in_new</span></a>'; var btnEdit = '<button class="action-btn" title="Edit Artikel" onclick="editPost(\'' + p.id + '\')" style="margin-right:6px; color:var(--primary);"><span class="material-icons-round" style="font-size:18px;">edit</span></button>'; let row = '<tr><td><b style="color:var(--text-dark); font-size:15px;">' + p.title + '</b><br><small style="color:var(--text-light);">' + date + '</small></td><td>' + labelsHtml + '</td><td>' + statusBadge + '</td><td style="text-align:center;">' + btnView + btnEdit + '<button class="action-btn btn-delete" onclick="delPost(\'' + p.id + '\')"><span class="material-icons-round" style="font-size:18px;">delete</span></button></td></tr>'; tb.innerHTML += row; }); }).getBlogPosts(); }
       
       function delPost(id) { customConfirm("Yakin menghapus konten ini permanen dari Blogger? Semua foto di dalamnya juga akan terhapus dari Drive.", function() { google.script.run.withSuccessHandler(function(res) { closeCustomModal(); customAlert(res); loadBlogPosts(); }).deleteBlogPostAPI(id); }); }
 
@@ -2528,13 +2573,15 @@ function logoutDashboard() {
           if(id === 'view-keuangan') loadLaporanKeuangan();
           if(id === 'view-quotation') { document.getElementById('quoDate').value = new Date().toISOString().split('T')[0]; }
           if(id === 'view-flashsale') { loadFlashSales(); loadFsProductDropdown(); document.getElementById('fsDate').value = new Date().toISOString().split('T')[0]; }
-          if(id === 'view-pesanan') loadOrderProductCache();
+          if(id === 'view-pesanan') { loadOrderProductCache(); loadOrders(); }
+          if(id === 'view-crm') loadCustomers();
+          if(id === 'view-staff') loadStaffDataUI();
           closeSidebar();
           var msgs = ['prodMsg', 'delMsg', 'blogMsg', 'pageMsg', 'setMsg']; 
           msgs.forEach(function(msgId) { var element = document.getElementById(msgId); if (element) { element.style.display = 'none'; } }); 
           
           setupTopbarActions(id); 
-          if (id === 'view-utama') loadDashboardStats(); 
+          if (id === 'view-utama') { loadDashboardStats(); loadGA4Stats(); }
           if (id === 'view-daftar-produk') loadProducts(); 
           if (id === 'view-blog') showBlogList(); 
           if (id === 'view-halaman') showPageList(); 
@@ -2706,8 +2753,15 @@ function editOrder(idx) {
   var dateVal = o[1]; 
 try { 
   if(dateVal) { 
-     document.getElementById('oDate').value = new Date().toISOString().split('T')[0]; 
-  } 
+     var d = new Date(dateVal);
+     if (!isNaN(d.getTime())) {
+         document.getElementById('oDate').value = d.toISOString().split('T')[0];
+     } else {
+         document.getElementById('oDate').value = dateVal;
+     }
+  } else {
+     document.getElementById('oDate').value = new Date().toISOString().split('T')[0];
+  }
 } catch(e){}
   
   document.getElementById('oName').value = o[2]; 
@@ -2810,6 +2864,46 @@ function searchRajaOngkir(keyword) {
     }, 800);
 }
 
+/* --- GLOBAL PRODUCT AUTOCOMPLETE --- */
+let productsDataCache = null;
+function searchGlobalProduct(keyword, displayInputId, valueInputId, dropdownId, mode) {
+    let dropdown = document.getElementById(dropdownId);
+    if(!keyword || keyword.length < 2) { dropdown.style.display = 'none'; return; }
+    
+    let processSearch = function(data) {
+        let kw = keyword.toLowerCase();
+        let res = data.filter(function(r) { return (r[9]&&r[9].toString().toLowerCase().includes(kw)) || (r[1]&&r[1].toString().toLowerCase().includes(kw)); }).slice(0, 10);
+        if(res.length === 0) {
+            dropdown.innerHTML = '<div style="padding:10px; font-size:12px; color:var(--text-light);">Tidak ditemukan</div>';
+            dropdown.style.display = 'block'; return;
+        }
+        dropdown.innerHTML = '';
+        res.forEach(function(r) {
+            let name = r[1], sku = r[9]||'-', price = parseInt(r[2])||0;
+            let div = document.createElement('div');
+            div.style.cssText = 'padding:8px 10px; border-bottom:1px solid var(--border-color); cursor:pointer; font-size:12px;';
+            div.innerHTML = '<b>' + name + '</b><br><span style="color:var(--text-light); font-size:11px;">SKU: ' + sku + ' | Rp ' + price.toLocaleString('id-ID') + '</span>';
+            div.onclick = function() {
+                document.getElementById(displayInputId).value = name;
+                if(mode === 'fs') {
+                    if(document.getElementById(valueInputId)) document.getElementById(valueInputId).value = name + '|' + price;
+                } else {
+                    if(document.getElementById(valueInputId)) document.getElementById(valueInputId).value = price;
+                }
+                dropdown.style.display = 'none';
+            };
+            dropdown.appendChild(div);
+        });
+        dropdown.style.display = 'block';
+    };
+    
+    if(productsDataCache) { processSearch(productsDataCache); } 
+    else { 
+        dropdown.innerHTML = '<div style="padding:10px; font-size:12px;">Memuat data...</div>'; dropdown.style.display = 'block';
+        google.script.run.withSuccessHandler(function(d){ productsDataCache = (d||[]); processSearch(productsDataCache); }).getProducts(); 
+    }
+}
+
 function cekOngkir() {
     let destId = document.getElementById('oSubdistrictId').value;
     let weight = document.getElementById('oWeight').value || 1000;
@@ -2880,25 +2974,7 @@ function generateTagihanAI(orderId, name, amount, phone) {
     });
 }
 
-function exportLaporanSelesai() {
-    google.script.run.withSuccessHandler(function(data) {
-        if(!data || data.length === 0) { customAlert("Belum ada data pesanan Selesai."); return; }
-        
-        let csvContent = "data:text/csv;charset=utf-8,";
-        data.forEach(function(rowArray) {
-            let row = rowArray.map(item => `"${(item||'').toString().replace(/"/g, '""')}"`).join(",");
-            csvContent += row + "\\r\\n";
-        });
-        
-        var encodedUri = encodeURI(csvContent);
-        var link = document.createElement("a");
-        link.setAttribute("href", encodedUri);
-        link.setAttribute("download", "Laporan_Keuangan_Selesai.csv");
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-    }).getLaporanKeuangan();
-}
+
 
 function analyzeLaporanAI() {
     openCustomModal('confirm', 'Analisis Keuangan AI', 'Sistem akan mengirimkan ringkasan data pesanan berstatus Selesai ke AI untuk dianalisis performanya. Lanjutkan?', function() {
@@ -2944,9 +3020,7 @@ Bagiannya: 1. Ringkasan Kinerja, 2. Insight Produk Terlaris, 3. Saran Strategi B
                 document.getElementById('cModalDesc').style.textAlign = 'left';
                 document.getElementById('cModalDesc').style.fontSize = '14px';
                 
-                document.getElementById('cModalCancel').style.display = 'none';
-                document.getElementById('cModalConfirm').innerText = "Tutup";
-                document.getElementById('cModalConfirm').onclick = function(){ 
+                customModalAction = function(){ 
                     closeCustomModal(); 
                     setTimeout(()=>{
                         document.getElementById('cModalDesc').style.textAlign = 'center';
@@ -3138,14 +3212,7 @@ function loadGA4Stats() {
   }).getGA4Data();
 }
 
-// Menimpa fungsi showView agar otomatis memuat data pesanan saat tab diklik
-var originalShowView = showView;
-showView = function(id, title, desc, el) {
-    originalShowView(id, title, desc, el);
-    if(id === 'view-utama') loadGA4Stats();
-    if(id === 'view-pesanan') loadOrders();
-    if(id === 'view-crm') loadCustomers(); // Otomatis muat pelanggan
-};
+
 
 // Fungsi JavaScript untuk eksekusi sinkronisasi data pesanan
 function syncCRMData(btn) {
@@ -3312,10 +3379,14 @@ function magicWriteMeta(type) {
                 let descMatch = res.match(/DESC:\s*(.*)/i);
                 
                 if (type === 'product') {
-                    if(titleMatch) document.getElementById('pMetaTitle').value = titleMatch[1].trim();
-                    if(descMatch) document.getElementById('pMetaDesc').value = descMatch[1].trim();
-                    checkSEO(document.getElementById('pMetaTitle'), 'pMetaTBar', 15, 60);
-                    checkSEO(document.getElementById('pMetaDesc'), 'pMetaDBar', 50, 160);
+                    if(target === 'title' || !target) {
+                        if(titleMatch) document.getElementById('pMetaTitle').value = titleMatch[1].trim();
+                        checkSEO(document.getElementById('pMetaTitle'), 'pMetaTBar', 15, 60);
+                    }
+                    if(target === 'desc' || !target) {
+                        if(descMatch) document.getElementById('pMetaDesc').value = descMatch[1].trim();
+                        checkSEO(document.getElementById('pMetaDesc'), 'pMetaDBar', 50, 160);
+                    }
                 } else if (type === 'blog') {
                     if(descMatch) document.getElementById('postMeta').value = descMatch[1].trim();
                     checkSEO(document.getElementById('postMeta'), 'bMetaDBar', 50, 160);
@@ -3601,10 +3672,10 @@ function loadStaffDataUI() {
                         <span style="background: ${staf.role === 'Super Admin' ? '#e0e7ff' : '#f1f5f9'}; color: ${staf.role === 'Super Admin' ? 'var(--primary)' : 'var(--text-light)'}; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600;">${staf.role}</span>
                     </td>
                     <td style="padding: 16px; border-bottom: 1px solid var(--border-color); text-align: center;">
-                        <button style="background:none; border:none; color:var(--primary); cursor:pointer; margin-right:8px;" onclick="editStaffModal('${safeData}')" title="Edit">
+                        <button style="background:none; border:none; color:var(--primary); cursor:pointer; margin-right:4px; padding:4px;" onclick="editStaffModal('${safeData}')" title="Edit">
                             <span class="material-icons-round">edit</span>
                         </button>
-                        <button style="background:none; border:none; color:var(--danger); cursor:pointer;" onclick="deleteStaffBtn('${staf.username}')" title="Hapus">
+                        <button style="background:none; border:none; color:var(--danger); cursor:pointer; padding:4px;" onclick="deleteStaffBtn('${staf.username}')" title="Hapus">
                             <span class="material-icons-round">delete</span>
                         </button>
                     </td>
@@ -3738,6 +3809,7 @@ function executeSaveStaff(data, btn, originalBtnText) {
             if(sessionData.username === data.username) {
                 sessionData.nama = data.nama; sessionData.role = data.role;
                 if(data.foto) sessionData.foto = data.foto;
+                window.activeUserSession = sessionData; // Gunakan variabel global
                 localStorage.setItem('userSession', JSON.stringify(sessionData));
                 applyUserSession();
                 // PAKAI POP-UP MODERN
@@ -3886,6 +3958,7 @@ function addFsProduct() {
     fsProducts.push({ name: name, originalPrice: originalPrice, salePrice: salePrice, discount: disc });
     document.getElementById('fsDiscount').value = '';
     sel.value = '';
+    if(document.getElementById('fsProductSearch')) document.getElementById('fsProductSearch').value = '';
     renderFsProducts();
 }
 
@@ -4090,7 +4163,7 @@ function loadLaporanKeuangan() {
         var html = '';
         for(var i = 1; i < data.length; i++) {
             var row = data[i];
-            var amt = parseInt(row[6]) || 0;
+            var amt = parseInt((row[6] || '').toString().replace(/[^0-9]/g, '')) || 0;
             totalRev += amt;
             // Hitung produk terlaris
             try {
@@ -4292,14 +4365,15 @@ function loadTestimoni() {
     }).getTestimonialData();
 }
 
-function saveTestimoni() {
+function saveTestimoni(btn) {
     let tName = document.getElementById('tName').value;
     let tRating = document.getElementById('tRating').value;
     let tSKU = document.getElementById('tSKU').value;
     let tText = document.getElementById('tText').value;
     if(!tName || !tSKU || !tText) { customAlert("Nama, SKU, dan Ulasan wajib diisi!"); return; }
     
-    let btn = event.currentTarget;
+    if(!btn) btn = document.getElementById('btnSaveTestimoni'); // fallback
+    let originalText = btn.innerHTML;
     btn.innerHTML = '<span class="material-icons-round spin-icon">autorenew</span> Menyimpan...';
     btn.disabled = true;
     
@@ -4309,10 +4383,11 @@ function saveTestimoni() {
         document.getElementById('tName').value = '';
         document.getElementById('tSKU').value = '';
         document.getElementById('tText').value = '';
+        document.getElementById('tRating').value = '5'; // Reset rating
         customAlert("Ulasan berhasil disimpan dan SEO Bintang diperbarui.");
         loadTestimoni();
     }).withFailureHandler(function(err) {
-        btn.innerHTML = '<span class="material-icons-round">save</span> Simpan Ulasan';
+        btn.innerHTML = originalText;
         btn.disabled = false;
         customAlert("Gagal: " + err.message);
     }).addTestimonial(tName, tRating, tSKU, tText);
@@ -4332,7 +4407,7 @@ function deleteTestimoni(id) {
 }
 
 function loadDriveMedia() {
-    let driveId = document.getElementById('setDriveId') ? document.getElementById('setDriveId').value : null;
+    let driveId = (typeof globalSettings !== 'undefined' && globalSettings.driveId) ? globalSettings.driveId : (document.getElementById('setDriveId') ? document.getElementById('setDriveId').value : null);
     document.getElementById('lblMediaDriveId').innerText = driveId || "Belum Diatur";
     if(!driveId) {
         document.getElementById('mediaGrid').innerHTML = '<div style="grid-column:1/-1;text-align:center;">Silakan atur Folder Drive ID di menu Pengaturan.</div>';
