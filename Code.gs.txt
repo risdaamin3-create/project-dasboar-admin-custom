@@ -633,7 +633,7 @@ function updateInlineData(row, mainPrice, mainDisc, mainStock, variantStr) {
 // ==========================================
 // FITUR BLOGGER API (ARTIKEL)
 // ==========================================
-function publishBlogPost(title, content, labels, meta, postDate, location, permalink, isDraft, canonical) {
+function publishBlogPost(title, content, labels, meta, postDate, location, permalink, isDraft, canonical, postId) {
   const config = getSystemConfig();
   if(!config.blogId) return "Error: Blog ID belum diatur di Pengaturan!";
 
@@ -649,13 +649,15 @@ function publishBlogPost(title, content, labels, meta, postDate, location, perma
   if(meta) payload.customMetaData = meta; if(location) payload.location = { "name": location };
   if(postDate) { try { payload.published = new Date(postDate).toISOString(); } catch(e) {} }
 
-  const options = { "method": "post", "headers": { "Authorization": "Bearer " + ScriptApp.getOAuthToken() }, "contentType": "application/json", "payload": JSON.stringify(payload), "muteHttpExceptions": true };
+  let method = postId ? "put" : "post";
+  const options = { "method": method, "headers": { "Authorization": "Bearer " + ScriptApp.getOAuthToken() }, "contentType": "application/json", "payload": JSON.stringify(payload), "muteHttpExceptions": true };
   try {
-    const draftParam = isDraft ? "?isDraft=true" : "";
-    const response = UrlFetchApp.fetch("https://www.googleapis.com/blogger/v3/blogs/" + config.blogId + "/posts/" + draftParam, options);
+    const draftParam = (isDraft && !postId) ? "?isDraft=true" : "";
+    const endpoint = postId ? "/posts/" + postId : "/posts/";
+    const response = UrlFetchApp.fetch("https://www.googleapis.com/blogger/v3/blogs/" + config.blogId + endpoint + draftParam, options);
     const json = JSON.parse(response.getContentText());
     if (json.error) return "Error API: " + json.error.message;
-    return isDraft ? "Artikel disimpan sebagai DRAF." : "Artikel SEO berhasil TERBIT.";
+    return postId ? "Artikel berhasil diperbarui." : (isDraft ? "Artikel disimpan sebagai DRAF." : "Artikel SEO berhasil TERBIT.");
   } catch(e) { return "Error sistem: " + e.message; }
 }
 
@@ -2056,5 +2058,283 @@ function getLaporanKeuangan() {
     return result;
   } catch(e) {
     return [];
+  }
+}
+
+// ==========================================
+// FUNGSI MANAJEMEN STAFF (TAMBAHAN)
+// ==========================================
+function getStaffList() {
+  try {
+    var sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Users');
+    if (!sheet || sheet.getLastRow() < 2) return { success: false, message: 'Data User tidak ditemukan' };
+    
+    var headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 5)).getValues()[0];
+    var userIdx = headers.indexOf('Username');
+    var passIdx = headers.indexOf('Password');
+    var nameIdx = headers.indexOf('Nama');
+    var roleIdx = headers.indexOf('Role');
+    var photoIdx = headers.indexOf('Foto Profil');
+    
+    if(userIdx === -1 || nameIdx === -1) return { success: false, message: 'Format tabel Users salah' };
+    
+    var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, Math.max(sheet.getLastColumn(), 5)).getValues();
+    var result = [];
+    for (var i = 0; i < data.length; i++) {
+      result.push({
+        nama: data[i][nameIdx],
+        username: data[i][userIdx],
+        password: '', // Jangan kirim hash ke frontend
+        role: roleIdx !== -1 ? data[i][roleIdx] || 'Staff' : 'Staff',
+        foto: photoIdx !== -1 ? data[i][photoIdx] || '' : ''
+      });
+    }
+    return { success: true, data: result };
+  } catch(e) {
+    return { success: false, message: e.message };
+  }
+}
+
+function saveStaffData(data) {
+  try {
+    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sheet = ss.getSheetByName('Users');
+    if (!sheet) {
+      sheet = ss.insertSheet('Users');
+      sheet.appendRow(['Username', 'Password', 'Nama', 'Role', 'Foto Profil']);
+    }
+    
+    var headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 5)).getValues()[0];
+    var userIdx = headers.indexOf('Username');
+    var passIdx = headers.indexOf('Password');
+    var nameIdx = headers.indexOf('Nama');
+    var roleIdx = headers.indexOf('Role');
+    var photoIdx = headers.indexOf('Foto Profil');
+    
+    if(userIdx === -1) {
+      userIdx=0; passIdx=1; nameIdx=2; roleIdx=3; photoIdx=4;
+      sheet.getRange(1,1,1,5).setValues([['Username', 'Password', 'Nama', 'Role', 'Foto Profil']]);
+    }
+    
+    var values = sheet.getDataRange().getValues();
+    var foundIdx = -1;
+    for (var i = 1; i < values.length; i++) {
+      if (values[i][userIdx] == data.username) {
+        foundIdx = i + 1;
+        break;
+      }
+    }
+    
+    var passwordHash = data.password ? hashPassword(data.password) : null;
+    
+    if (data.isEdit === 'true' || foundIdx !== -1) {
+      if (foundIdx === -1) return { success: false, message: 'Username tidak ditemukan untuk diubah' };
+      if(nameIdx !== -1) sheet.getRange(foundIdx, nameIdx + 1).setValue(data.nama);
+      if (passwordHash && passIdx !== -1) sheet.getRange(foundIdx, passIdx + 1).setValue(passwordHash);
+      if(roleIdx !== -1) sheet.getRange(foundIdx, roleIdx + 1).setValue(data.role);
+      if (data.foto && photoIdx !== -1) sheet.getRange(foundIdx, photoIdx + 1).setValue(data.foto);
+      return { success: true, message: 'Data staf diperbarui' };
+    } else {
+      var newRow = new Array(Math.max(sheet.getLastColumn(), 5)).fill('');
+      if(userIdx !== -1) newRow[userIdx] = data.username;
+      if(passIdx !== -1) newRow[passIdx] = passwordHash || '';
+      if(nameIdx !== -1) newRow[nameIdx] = data.nama;
+      if(roleIdx !== -1) newRow[roleIdx] = data.role;
+      if(photoIdx !== -1) newRow[photoIdx] = data.foto || '';
+      sheet.appendRow(newRow);
+      return { success: true, message: 'Staf baru ditambahkan' };
+    }
+  } catch(e) {
+    return { success: false, message: e.message };
+  }
+}
+
+function deleteStaffAccount(username) {
+  try {
+    var sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Users');
+    if(!sheet) return { success: false, message: 'Tab Users tidak ada' };
+    var headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 5)).getValues()[0];
+    var userIdx = headers.indexOf('Username');
+    if(userIdx === -1) return { success: false, message: 'Kolom Username tidak ada' };
+    
+    var values = sheet.getDataRange().getValues();
+    for (var i = 1; i < values.length; i++) {
+      if (values[i][userIdx] == username) {
+        sheet.deleteRow(i + 1);
+        return { success: true, message: 'Akun berhasil dihapus' };
+      }
+    }
+    return { success: false, message: 'Username tidak ditemukan' };
+  } catch(e) {
+    return { success: false, message: e.message };
+  }
+}
+
+// ==========================================
+// TESTIMONI
+// ==========================================
+function getTestimonialData() {
+  try {
+    var sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Testimoni');
+    if (!sheet) return [];
+    var data = sheet.getDataRange().getValues();
+    var result = [];
+    for (var i = 1; i < data.length; i++) {
+      result.push({
+        id: data[i][0],
+        name: data[i][1],
+        rating: data[i][2],
+        sku: data[i][3],
+        text: data[i][4]
+      });
+    }
+    return result;
+  } catch(e) {
+    return [];
+  }
+}
+
+function addTestimonial(name, rating, sku, text) {
+  try {
+    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sheet = ss.getSheetByName('Testimoni');
+    if (!sheet) {
+      sheet = ss.insertSheet('Testimoni');
+      sheet.appendRow(['ID', 'Nama', 'Rating', 'SKU', 'Ulasan']);
+    }
+    sheet.appendRow([new Date().getTime(), name, rating, sku, text]);
+    return "Ulasan ditambahkan!";
+  } catch(e) {
+    throw new Error(e.message);
+  }
+}
+
+function deleteTestimonial(id) {
+  try {
+    var sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Testimoni');
+    var values = sheet.getDataRange().getValues();
+    for (var i = 1; i < values.length; i++) {
+      if (values[i][0] == id) {
+        sheet.deleteRow(i + 1);
+        return "Ulasan dihapus!";
+      }
+    }
+    return "Ulasan tidak ditemukan";
+  } catch(e) {
+    throw new Error(e.message);
+  }
+}
+
+// ==========================================
+// FLASH SALE
+// ==========================================
+function getFlashSales() {
+  try {
+    var sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('FlashSale');
+    if (!sheet) return [];
+    var data = sheet.getDataRange().getValues();
+    var result = [data[0]]; 
+    for (var i = 1; i < data.length; i++) {
+      result.push([data[i][0], data[i][1], data[i][2], data[i][3], i + 1]);
+    }
+    return result;
+  } catch(e) {
+    return [];
+  }
+}
+
+function saveFlashSaleData(data) {
+  try {
+    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sheet = ss.getSheetByName('FlashSale');
+    if (!sheet) {
+      sheet = ss.insertSheet('FlashSale');
+      sheet.appendRow(['Nama', 'Tanggal', 'Sesi', 'Produk']);
+    }
+    sheet.appendRow([data.name, data.date, data.sessions, data.products]);
+    return "Flash sale berhasil disimpan!";
+  } catch(e) {
+    throw new Error(e.message);
+  }
+}
+
+// ==========================================
+// MEDIA (GOOGLE DRIVE)
+// ==========================================
+function getDriveMedia(folderId) {
+  try {
+    if (!folderId) return [];
+    var folder = DriveApp.getFolderById(folderId);
+    var files = folder.getFiles();
+    var result = [];
+    while (files.hasNext()) {
+      var file = files.next();
+      result.push({
+        id: file.getId(),
+        name: file.getName(),
+        url: file.getUrl(),
+        thumbnail: file.getUrl(), // Drive APIv2/v3 has thumbnailLink, but Apps Script DriveApp doesn't directly expose it easily without advanced service, getUrl is safe fallback.
+        mimeType: file.getMimeType(),
+        size: file.getSize()
+      });
+    }
+    return result;
+  } catch(e) {
+    throw new Error(e.message);
+  }
+}
+
+function uploadMediaToDrive(base64Data, filename, folderId) {
+  try {
+    if (!folderId) return { success: false, message: "Folder ID tidak ditemukan" };
+    var folder = DriveApp.getFolderById(folderId);
+    
+    // Perbaikan MIME type (TINGGI-XX)
+    var mimeType = "image/jpeg";
+    if (filename.toLowerCase().endsWith('.png')) mimeType = "image/png";
+    else if (filename.toLowerCase().endsWith('.gif')) mimeType = "image/gif";
+    else if (filename.toLowerCase().endsWith('.webp')) mimeType = "image/webp";
+    
+    var blob = Utilities.newBlob(Utilities.base64Decode(base64Data), mimeType, filename);
+    var file = folder.createFile(blob);
+    return { success: true, url: file.getUrl(), id: file.getId() };
+  } catch(e) {
+    return { success: false, message: e.message };
+  }
+}
+
+function deleteDriveFile(id) {
+  try {
+    DriveApp.getFileById(id).setTrashed(true);
+    return "File dihapus.";
+  } catch(e) {
+    throw new Error(e.message);
+  }
+}
+
+function uploadSingleImageToDrive(base64DataUrl) {
+  try {
+    var config = getSystemConfig();
+    var folderId = config.driveId;
+    if (!folderId) throw new Error("Folder ID belum diatur di setting.");
+    
+    var base64Data = base64DataUrl;
+    var mimeType = "image/jpeg";
+    var ext = ".jpg";
+    if (base64DataUrl.indexOf('data:') === 0) {
+      var parts = base64DataUrl.split(';');
+      mimeType = parts[0].replace('data:', '');
+      base64Data = parts[1].replace('base64,', '');
+      if (mimeType === 'image/png') ext = '.png';
+      else if (mimeType === 'image/gif') ext = '.gif';
+      else if (mimeType === 'image/webp') ext = '.webp';
+    }
+    
+    var folder = DriveApp.getFolderById(folderId);
+    var blob = Utilities.newBlob(Utilities.base64Decode(base64Data), mimeType, "image_" + new Date().getTime() + ext);
+    var file = folder.createFile(blob);
+    return file.getUrl();
+  } catch(e) {
+    throw new Error(e.message);
   }
 }
