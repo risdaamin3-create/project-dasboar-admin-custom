@@ -284,6 +284,7 @@
       .weight-unit-select { width: 100%; border: 1px solid var(--border-color); border-radius: 10px; background: var(--card-bg); font-size: 13px; font-weight: 600; cursor: pointer; padding: 12px 14px; box-sizing: border-box; }
       .weight-number-input:focus, .weight-unit-select:focus { outline: none; border-color: var(--primary); }
       body[data-theme="dark"] .weight-number-input, body[data-theme="dark"] .weight-unit-select { background: #0f172a; border-color: #334155; color: #f8fafc; }
+      #view-setting {padding: 0px 15px;  overflow-y: auto; }
 
       /* Responsive */
       @media (max-width: 1024px) {
@@ -1789,7 +1790,7 @@
           </div>
 
           <!-- View 6: Pengaturan -->
-          <div id="view-setting" class="view-section" style="padding: 0px 15px 0px 15px; overflow-y: auto">
+          <div id="view-setting" class="view-section">
             <div id="setMsg" style="display:none; padding:14px; border-radius:10px; margin-bottom:24px; font-weight:600;"></div>
             
             <div class="panel">
@@ -1822,6 +1823,14 @@
                     <div class="form-group" style="margin-bottom:0;"><label>Link Google Maps</label><input type="text" id="setMaps" placeholder="https://maps.app.goo.gl/xxx"></div>
                 </div>
             </div>
+            <div class="panel">
+                    <div class="panel-header"><span class="material-icons-round" style="color:var(--primary);">share</span> Sosial Media</div>
+                    <div style="display: grid; grid-template-columns: 1fr; gap: 20px;">
+                        <div class="form-group" style="margin-bottom:0;"><label>Link Instagram</label><input type="text" id="setSocIg" placeholder="https://instagram.com/toko"></div>
+                        <div class="form-group" style="margin-bottom:0;"><label>Link Facebook</label><input type="text" id="setSocFb" placeholder="https://facebook.com/toko"></div>
+                        <div class="form-group" style="margin-bottom:0;"><label>Link TikTok</label><input type="text" id="setSocTikTok" placeholder="https://tiktok.com/@toko"></div>
+                    </div>
+                </div>
 
             <div class="grid-2-col">
               <div>
@@ -1844,15 +1853,6 @@
                     <div class="panel-header"><span class="material-icons-round" style="color:var(--primary);">forum</span> Template Pesan WA Otomatis</div>
                     <div class="form-group" style="margin-bottom:0;">
                         <textarea id="setWaTemplate" style="height:80px;" placeholder="Halo admin, saya order [NAMA_PRODUK] SKU [SKU_PRODUK]. Rp [HARGA]."></textarea>
-                    </div>
-                </div>
-
-                <div class="panel">
-                    <div class="panel-header"><span class="material-icons-round" style="color:var(--primary);">share</span> Sosial Media</div>
-                    <div style="display: grid; grid-template-columns: 1fr; gap: 20px;">
-                        <div class="form-group" style="margin-bottom:0;"><label>Link Instagram</label><input type="text" id="setSocIg" placeholder="https://instagram.com/toko"></div>
-                        <div class="form-group" style="margin-bottom:0;"><label>Link Facebook</label><input type="text" id="setSocFb" placeholder="https://facebook.com/toko"></div>
-                        <div class="form-group" style="margin-bottom:0;"><label>Link TikTok</label><input type="text" id="setSocTikTok" placeholder="https://tiktok.com/@toko"></div>
                     </div>
                 </div>
               </div>
